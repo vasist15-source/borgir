@@ -67,6 +67,14 @@ namespace Ryujinx.Graphics.Metal
         private int _prewarmStatus;
         private PipelineUid _prewarmKey;
         private bool _prewarmAwaitingDraw;
+
+        // Other states this program was drawn with in earlier sessions (PipelineStateStore), built by the pre-warm
+        // workers one at a time; the one being built is a pending build for the draws that need it meanwhile.
+        private PipelineUid[] _savedKeys;
+        private PipelineUid _savedKeyBuilding;
+        private int _savedKeyInFlight;
+        private int _disposing;
+        private ulong _sourceHash;
         private IntPtr _prewarmedCompute;
 
         // Deferred compilation (PipelinePrewarmer.DeferCompile): a program from the shader
@@ -1451,6 +1459,8 @@ namespace Ryujinx.Graphics.Metal
 
             if (fromCache && PipelinePrewarmer.Enabled)
             {
+                _savedKeys = PipelineStateStore.Lookup(SourceHash);
+
                 if (IsCompute)
                 {
                     _prewarmStatus = PrewarmPending;
@@ -1792,7 +1802,57 @@ namespace Ryujinx.Graphics.Metal
                 return true;
             }
 
+            if (Volatile.Read(ref _savedKeyInFlight) != 0 && key.Equals(ref _savedKeyBuilding))
+            {
+                return true;
+            }
+
             return Volatile.Read(ref _prewarmStatus) == PrewarmBuilding && key.Equals(ref _prewarmKey);
+        }
+
+        /// <summary>A hash of the program's stages and their MSL, which identifies it between sessions.</summary>
+        public ulong SourceHash
+        {
+            get
+            {
+                if (_sourceHash == 0)
+                {
+                    _sourceHash = PipelineStateStore.HashSources(_shaders);
+                }
+
+                return _sourceHash;
+            }
+        }
+
+        /// <summary>The states this program was drawn with in earlier sessions, or null.</summary>
+        public PipelineUid[] SavedPipelineKeys => _savedKeys;
+
+        /// <summary>
+        /// Prewarm worker: starts building one of the saved states, unless the program is being disposed. Counted as
+        /// an in-flight build before the check, so Dispose waits for it.
+        /// </summary>
+        public bool TryBeginSavedPrewarm(ref PipelineUid key)
+        {
+            Interlocked.Increment(ref _inFlightGraphicsPipelineBuilds);
+
+            if (Volatile.Read(ref _disposing) != 0)
+            {
+                Interlocked.Decrement(ref _inFlightGraphicsPipelineBuilds);
+
+                return false;
+            }
+
+            _savedKeyBuilding = key;
+            Volatile.Write(ref _savedKeyInFlight, 1);
+
+            return true;
+        }
+
+        /// <summary>Prewarm worker: the saved state it built (zero if the build failed).</summary>
+        public void EndSavedPrewarm(ref PipelineUid key, MTLRenderPipelineState pipeline)
+        {
+            EndGraphicsPipelineBuild(ref key, pipeline);
+            Volatile.Write(ref _savedKeyInFlight, 0);
         }
 
         /// <summary>The state the pre-warm builds, for the worker that builds it.</summary>
@@ -2292,6 +2352,7 @@ namespace Ryujinx.Graphics.Metal
 
             // A pre-warm that has not started is dropped; one that has is waited for below.
             Interlocked.CompareExchange(ref _prewarmStatus, PrewarmDone, PrewarmPending);
+            Interlocked.Exchange(ref _disposing, 1);
 
             // A build still running on a worker thread reads this program's functions
             // through its descriptor; let it finish before the functions go away. Builds

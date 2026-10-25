@@ -1601,6 +1601,7 @@ namespace Ryujinx.Graphics.Metal
             PipelineState.TakeFrameCounters(out long framePsoSkips, out long framePsoWaitTicks);
 
             StallLedger.NotePresent(_presentCount);
+            PipelineStateStore.NotePresent();
 
             if (_frameLine)
             {

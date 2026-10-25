@@ -422,6 +422,7 @@ namespace Ryujinx.Graphics.Metal
 
             // Stop the pre-warm workers first: a program waits for a build in flight on it.
             PipelinePrewarmer?.Dispose();
+            PipelineStateStore.Close();
 
             foreach (Program program in Programs)
             {

@@ -1,4 +1,5 @@
 using Ryujinx.Common.Logging;
+using Ryujinx.Graphics.GAL;
 using SharpMetal.Foundation;
 using SharpMetal.Metal;
 using System;
@@ -196,6 +197,7 @@ namespace Ryujinx.Graphics.Metal
                         }
 
                         Build(program);
+                        BuildSaved(program);
                     }
                     catch (Exception exception)
                     {
@@ -284,6 +286,68 @@ namespace Ryujinx.Graphics.Metal
 
             Interlocked.Add(ref BuildTicks, ticks);
             Interlocked.Add(ref _batchTicks, ticks);
+        }
+
+        /// <summary>
+        /// Builds the other states the program was drawn with in earlier sessions (<see cref="PipelineStateStore"/>).
+        /// </summary>
+        private void BuildSaved(Program program)
+        {
+            PipelineUid[] keys = program.SavedPipelineKeys;
+
+            if (keys == null || program.IsCompute || program.CheckProgramLink(false) != ProgramLinkStatus.Success)
+            {
+                return;
+            }
+
+            PipelineUid prewarmKey = program.PrewarmKey;
+
+            foreach (PipelineUid saved in keys)
+            {
+                PipelineUid key = saved;
+
+                if (key.Equals(ref prewarmKey))
+                {
+                    continue;
+                }
+
+                if (!program.TryBeginSavedPrewarm(ref key))
+                {
+                    return;
+                }
+
+                NSError error = new(IntPtr.Zero);
+                long start = Stopwatch.GetTimestamp();
+                MTLRenderPipelineState pipeline = default;
+
+                try
+                {
+                    PipelineState state = new() { Internal = key };
+                    using MTLRenderPipelineDescriptor descriptor = state.CreatePrewarmDescriptor(program);
+
+                    pipeline = _device.NewRenderPipelineState(descriptor, ref error);
+                }
+                finally
+                {
+                    if (error != IntPtr.Zero || pipeline.NativePtr == IntPtr.Zero)
+                    {
+                        Interlocked.Increment(ref Failed);
+                        pipeline = default;
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref PipelineStateStore.BuiltAhead);
+                        Interlocked.Increment(ref _batchRender);
+                    }
+
+                    program.EndSavedPrewarm(ref key, pipeline);
+                }
+
+                long ticks = Stopwatch.GetTimestamp() - start;
+
+                Interlocked.Add(ref BuildTicks, ticks);
+                Interlocked.Add(ref _batchTicks, ticks);
+            }
         }
 
         /// <summary>

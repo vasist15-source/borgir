@@ -555,6 +555,7 @@ namespace Ryujinx.Graphics.Metal
                     PipelineUid key = Internal;
 
                     program.BeginGraphicsPipelineBuild(ref key);
+                    PipelineStateStore.Record(program, ref key);
                     PsoRenderQueued++;
                     _psoFrameQueued++;
 
@@ -602,6 +603,7 @@ namespace Ryujinx.Graphics.Metal
             if (pipelineState.NativePtr != IntPtr.Zero)
             {
                 program.AddGraphicsPipeline(ref Internal, pipelineState);
+                PipelineStateStore.Record(program, ref Internal);
             }
 
             return pipelineState;

@@ -11,7 +11,9 @@ using Ryujinx.Graphics.Shader;
 using Ryujinx.Graphics.Shader.Translation;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 
 namespace Ryujinx.Graphics.Gpu.Shader
@@ -101,6 +103,7 @@ namespace Ryujinx.Graphics.Gpu.Shader
             _programsToSaveQueue = new Queue<ProgramToSave>();
 
             string diskCacheTitleId = GetDiskCachePath();
+            ShaderCacheLocation.Directory = diskCacheTitleId;
 
             _computeShaderCache = new ComputeShaderCacheHashTable();
             _graphicsShaderCache = new ShaderCacheHashTable();
@@ -184,7 +187,123 @@ namespace Ryujinx.Graphics.Gpu.Shader
                 {
                     Logger.Warning?.Print(LogClass.Gpu, $"Failed to load {errorCount} shaders from the disk cache.");
                 }
+
+                StartTranslatorWarmup();
             }
+        }
+
+        // Programs translated once at boot, the largest first since they reach the most of the translator.
+        private const int WarmupGraphicsPrograms = 6;
+        private const int WarmupComputePrograms = 2;
+
+        /// <summary>
+        /// Translates a few cached programs again on a background thread and discards the result, so that the
+        /// translator is compiled by the JIT before the game needs it. Cached programs load without translating, so
+        /// the first new shader of a session used to pay for compiling the translator on the GPU thread: a 90 ms
+        /// first translation is 16 ms once warm, and in game the first one measured about 220 ms of a freeze.
+        /// </summary>
+        private void StartTranslatorWarmup()
+        {
+            // Taken here, on the thread that owns the tables; the warm-up only reads these programs.
+            CachedShaderProgram[] graphics = _graphicsShaderCache.GetPrograms()
+                .Where(program => program.Shaders.Length == Constants.ShaderStages + 1 && program.Shaders[0] == null)
+                .OrderByDescending(program => program.Shaders.Sum(shader => shader?.Code?.Length ?? 0))
+                .Take(WarmupGraphicsPrograms)
+                .ToArray();
+
+            CachedShaderProgram[] compute = _computeShaderCache.GetPrograms()
+                .Where(program => program.Shaders.Length == 1 && program.Shaders[0] != null)
+                .OrderByDescending(program => program.Shaders[0].Code.Length)
+                .Take(WarmupComputePrograms)
+                .ToArray();
+
+            if (graphics.Length + compute.Length == 0)
+            {
+                return;
+            }
+
+            new Thread(() => WarmUpTranslator(graphics, compute))
+            {
+                Name = "GPU.ShaderWarmup",
+                IsBackground = true,
+                Priority = ThreadPriority.BelowNormal,
+            }.Start();
+        }
+
+        private void WarmUpTranslator(CachedShaderProgram[] graphics, CachedShaderProgram[] compute)
+        {
+            long start = Stopwatch.GetTimestamp();
+            int stages = 0;
+            TargetApi api = _context.Capabilities.Api;
+
+            foreach (CachedShaderProgram program in graphics)
+            {
+                try
+                {
+                    // As ParallelDiskCacheLoader translates a program from its guest code, without compiling it.
+                    ShaderSpecializationState specState = program.SpecializationState;
+                    ShaderSpecializationState newSpecState = new(ref specState.GraphicsState, specState.PipelineState, specState.TransformFeedbackDescriptors);
+                    ResourceCounts counts = new();
+                    DiskCacheGpuAccessor[] gpuAccessors = new DiskCacheGpuAccessor[Constants.ShaderStages];
+                    TranslatorContext[] translatorContexts = new TranslatorContext[Constants.ShaderStages];
+                    TranslatorContext nextStage = null;
+                    bool hasGeometryShader = program.Shaders[4] != null;
+
+                    for (int stageIndex = Constants.ShaderStages - 1; stageIndex >= 0; stageIndex--)
+                    {
+                        CachedShaderStage shader = program.Shaders[stageIndex + 1];
+
+                        if (shader == null)
+                        {
+                            continue;
+                        }
+
+                        gpuAccessors[stageIndex] = new DiskCacheGpuAccessor(_context, shader.Code, shader.Cb1Data, specState, newSpecState, counts, stageIndex, hasGeometryShader);
+                        translatorContexts[stageIndex] = DecodeGraphicsShader(gpuAccessors[stageIndex], api, DefaultFlags, 0);
+                        if (nextStage != null)
+                        {
+                            translatorContexts[stageIndex].SetNextStage(nextStage);
+                        }
+
+                        nextStage = translatorContexts[stageIndex];
+                    }
+
+                    for (int stageIndex = 0; stageIndex < Constants.ShaderStages; stageIndex++)
+                    {
+                        if (translatorContexts[stageIndex] != null)
+                        {
+                            gpuAccessors[stageIndex].InitializeReservedCounts(specState.TransformFeedbackDescriptors != null, vertexAsCompute: false);
+                            translatorContexts[stageIndex].Translate();
+                            stages++;
+                        }
+                    }
+                }
+                catch (Exception exception)
+                {
+                    Logger.Debug?.Print(LogClass.Gpu, $"Shader translator warm-up skipped a program: {exception.Message}");
+                }
+            }
+
+            foreach (CachedShaderProgram program in compute)
+            {
+                try
+                {
+                    CachedShaderStage shader = program.Shaders[0];
+                    ShaderSpecializationState specState = program.SpecializationState;
+                    ShaderSpecializationState newSpecState = new(ref specState.ComputeState);
+                    DiskCacheGpuAccessor gpuAccessor = new(_context, shader.Code, shader.Cb1Data, specState, newSpecState, new ResourceCounts(), 0, false);
+                    gpuAccessor.InitializeReservedCounts(tfEnabled: false, vertexAsCompute: false);
+
+                    DecodeComputeShader(gpuAccessor, api, 0).Translate();
+                    stages++;
+                }
+                catch (Exception exception)
+                {
+                    Logger.Debug?.Print(LogClass.Gpu, $"Shader translator warm-up skipped a program: {exception.Message}");
+                }
+            }
+
+            Logger.Info?.Print(LogClass.Gpu, $"Shader translator warmed up on {stages} cached shader stages in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F0} ms");
         }
 
         /// <summary>
