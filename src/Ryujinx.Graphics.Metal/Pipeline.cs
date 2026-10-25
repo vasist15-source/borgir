@@ -1600,6 +1600,8 @@ namespace Ryujinx.Graphics.Metal
 
             PipelineState.TakeFrameCounters(out long framePsoSkips, out long framePsoWaitTicks);
 
+            StallLedger.NotePresent(_presentCount);
+
             if (_frameLine)
             {
                 // One line per presented frame: the map flicker lasts about five frames

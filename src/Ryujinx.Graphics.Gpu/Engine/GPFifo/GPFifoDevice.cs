@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.Gpu.Memory;
 using System;
 using System.Collections.Concurrent;
@@ -493,7 +494,16 @@ namespace Ryujinx.Graphics.Gpu.Engine.GPFifo
         /// <returns>True if commands were received, false if wait timed out</returns>
         public bool WaitForCommands()
         {
-            return !_commandBufferQueue.IsEmpty || (_event.WaitOne(8) && !_commandBufferQueue.IsEmpty);
+            if (!_commandBufferQueue.IsEmpty)
+            {
+                return true;
+            }
+
+            long ledger = StallLedger.Begin();
+            bool signaled = _event.WaitOne(8);
+            StallLedger.End(StallKind.GpuIdle, ledger);
+
+            return signaled && !_commandBufferQueue.IsEmpty;
         }
 
         /// <summary>

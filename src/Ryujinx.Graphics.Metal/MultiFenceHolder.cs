@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Common.Memory;
 using SharpMetal.Metal;
 using System;
@@ -201,10 +202,14 @@ namespace Ryujinx.Graphics.Metal
             {
                 if (indefinite)
                 {
+                    long ledger = StallLedger.Begin();
+
                     for (int i = 0; i < fenceCount; i++)
                     {
                         fences[i].WaitUntilCompleted();
                     }
+
+                    StallLedger.EndFenceWait(ledger);
                 }
                 else
                 {

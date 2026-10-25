@@ -416,6 +416,15 @@ namespace Ryujinx.Graphics.Metal
 
         private MTLRenderPipelineState WaitForPendingPipeline(Program program, bool unbounded)
         {
+            long ledger = StallLedger.Begin();
+            MTLRenderPipelineState pipeline = WaitForPendingPipelineCore(program, unbounded);
+            StallLedger.End(StallKind.RenderPipelineWait, ledger);
+
+            return pipeline;
+        }
+
+        private MTLRenderPipelineState WaitForPendingPipelineCore(Program program, bool unbounded)
+        {
             long waitStart = Stopwatch.GetTimestamp();
             SpinWait spin = new();
 
@@ -554,6 +563,7 @@ namespace Ryujinx.Graphics.Metal
             long psoStart = Stopwatch.GetTimestamp();
             pipelineState = device.NewRenderPipelineState(descriptor, ref error);
             long psoTicks = Stopwatch.GetTimestamp() - psoStart;
+            StallLedger.End(StallKind.RenderPipelineBuild, StallLedger.Enabled ? psoStart : 0);
             PsoRenderCreated++;
             PsoRenderTicks += psoTicks;
 

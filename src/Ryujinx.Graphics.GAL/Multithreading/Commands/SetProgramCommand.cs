@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.GAL.Multithreading.Model;
 using Ryujinx.Graphics.GAL.Multithreading.Resources;
 
@@ -17,7 +18,9 @@ namespace Ryujinx.Graphics.GAL.Multithreading.Commands
         {
             ThreadedProgram program = command._program.GetAs<ThreadedProgram>(threaded);
 
+            long ledger = program.Compiled ? 0 : StallLedger.Begin();
             threaded.Programs.WaitForProgram(program);
+            StallLedger.End(StallKind.RenderProgramWait, ledger);
 
             renderer.Pipeline.SetProgram(program.Base);
         }

@@ -16,7 +16,8 @@ OUTPUT="${1:-$ROOT/artifacts}"
 mkdir -p "$OUTPUT"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
 VERSION="${VERSION:-1.3.3}"
-BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
+# The history restarted at 0.5, whose builds had reached 5287 (its second commit); the count carries on from there.
+BUILD="$(( 5285 + $(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0) ))"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 PUBLISH="$OUTPUT/publish"

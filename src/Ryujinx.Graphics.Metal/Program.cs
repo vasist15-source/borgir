@@ -33,6 +33,7 @@ namespace Ryujinx.Graphics.Metal
         private readonly ShaderSource[] _shaders;
         private readonly GCHandle[] _handles;
         private readonly ManualResetEventSlim _compilationEvent = new(false);
+        private long _compileStart;
         private int _successCount;
 
         private readonly MetalRenderer _renderer;
@@ -1495,6 +1496,7 @@ namespace Ryujinx.Graphics.Metal
             else
             {
                 _status = ProgramLinkStatus.Incomplete;
+                _compileStart = Stopwatch.GetTimestamp();
 
                 for (int i = 0; i < _shaders.Length; i++)
                 {
@@ -1647,6 +1649,16 @@ namespace Ryujinx.Graphics.Metal
             {
                 _status = ProgramLinkStatus.Success;
                 _compilationEvent.Set();
+
+                if (StallLedger.Enabled)
+                {
+                    long ms = (Stopwatch.GetTimestamp() - _compileStart) * 1000 / Stopwatch.Frequency;
+
+                    if (ms >= 50)
+                    {
+                        Logger.Warning?.Print(LogClass.Gpu, $"Slow shader compile: {ms} ms for a new program ({string.Join(", ", Array.ConvertAll(_shaders, s => $"{s.Stage} {s.Code?.Length ?? 0} chars"))})");
+                    }
+                }
 
                 if (Volatile.Read(ref _prewarmStatus) == PrewarmPending)
                 {

@@ -1,6 +1,7 @@
 using Ryujinx.Common;
-using Ryujinx.Common.SystemInterop;
 using Ryujinx.Common.Configuration;
+using Ryujinx.Common.Logging;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Graphics.GAL.Multithreading.Commands;
 using Ryujinx.Graphics.GAL.Multithreading.Commands.Buffer;
 using Ryujinx.Graphics.GAL.Multithreading.Commands.Renderer;
@@ -123,7 +124,9 @@ namespace Ryujinx.Graphics.GAL.Multithreading
 
             while (_running)
             {
+                long ledger = StallLedger.Begin();
                 _galWorkAvailable.Wait();
+                StallLedger.End(StallKind.RenderIdle, ledger);
                 _galWorkAvailable.Reset();
 
                 if (Volatile.Read(ref _interruptAction) != null)
@@ -171,12 +174,19 @@ namespace Ryujinx.Graphics.GAL.Multithreading
 
         internal unsafe T* New<T>() where T : unmanaged, IGALCommand
         {
-            while (_producerPtr == (Volatile.Read(ref _consumerPtr) + QueueCount - 1) % QueueCount)
+            if (_producerPtr == (Volatile.Read(ref _consumerPtr) + QueueCount - 1) % QueueCount)
             {
-                // If incrementing the producer pointer would overflow, we need to wait.
-                // _consumerPtr can only move forward, so there's no race to worry about here.
+                long ledger = StallLedger.Begin();
 
-                Thread.Sleep(1);
+                while (_producerPtr == (Volatile.Read(ref _consumerPtr) + QueueCount - 1) % QueueCount)
+                {
+                    // If incrementing the producer pointer would overflow, we need to wait.
+                    // _consumerPtr can only move forward, so there's no race to worry about here.
+
+                    Thread.Sleep(1);
+                }
+
+                StallLedger.End(StallKind.GpuQueueFull, ledger);
             }
 
             int taken = _producerPtr;
@@ -236,7 +246,9 @@ namespace Ryujinx.Graphics.GAL.Multithreading
             QueueCommand();
 
             // Wait for the command to complete.
+            long ledger = StallLedger.Begin();
             _invokeRun.Wait();
+            StallLedger.End(StallKind.GpuInvoke, ledger);
         }
 
         internal void WaitForFrame()
@@ -500,7 +512,9 @@ namespace Ryujinx.Graphics.GAL.Multithreading
 
                     _galWorkAvailable.Set();
 
+                    long ledger = StallLedger.Begin();
                     _interruptRun.WaitOne();
+                    StallLedger.End(StallKind.GpuInvoke, ledger);
                 }
             }
         }

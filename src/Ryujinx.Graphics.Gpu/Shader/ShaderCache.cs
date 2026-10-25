@@ -228,6 +228,8 @@ namespace Ryujinx.Graphics.Gpu.Shader
                 return cpShader;
             }
 
+            long ledger = StallLedger.Begin();
+
             ShaderSpecializationState specState = new(ref computeState);
             GpuAccessorState gpuAccessorState = new(samplerPoolMaximumId, poolState, computeState, default, specState);
             GpuAccessor gpuAccessor = new(_context, channel, gpuAccessorState);
@@ -245,6 +247,8 @@ namespace Ryujinx.Graphics.Gpu.Shader
             _computeShaderCache.Add(cpShader);
             EnqueueProgramToSave(cpShader, hostProgram, shaderSourcesArray);
             _cpPrograms[gpuVa] = cpShader;
+
+            StallLedger.End(StallKind.GpuShaderTranslate, ledger);
 
             return cpShader;
         }
@@ -334,6 +338,8 @@ namespace Ryujinx.Graphics.Gpu.Shader
                 _gpPrograms[addresses] = gpShaders;
                 return gpShaders;
             }
+
+            long ledger = StallLedger.Begin();
 
             TransformFeedbackDescriptor[] transformFeedbackDescriptors = GetTransformFeedbackDescriptors(ref state);
 
@@ -486,6 +492,8 @@ namespace Ryujinx.Graphics.Gpu.Shader
             }
 
             _gpPrograms[addresses] = gpShaders;
+
+            StallLedger.End(StallKind.GpuShaderTranslate, ledger);
 
             return gpShaders;
         }

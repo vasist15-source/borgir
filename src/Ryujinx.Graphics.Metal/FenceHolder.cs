@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using SharpMetal.Metal;
 using System;
 using System.Runtime.Versioning;
@@ -63,7 +64,11 @@ namespace Ryujinx.Graphics.Metal
 
         public void Wait()
         {
+            long ledger = StallLedger.Begin();
+
             _fence.WaitUntilCompleted();
+
+            StallLedger.EndFenceWait(ledger);
         }
 
         public bool IsSignaled()

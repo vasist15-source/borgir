@@ -3,6 +3,7 @@ using Ryujinx.Common.Logging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using SDL;
@@ -38,6 +39,20 @@ namespace Ryujinx.SDL3.Common
         private bool _isRunning;
         private uint _refereceCount;
         private Thread _worker;
+
+        // A pump posted to the main thread that has not run yet: the next one waits for it instead of queueing
+        // behind it, so a busy main thread delays controller state once rather than by a backlog of pumps.
+        private int _pumpQueued;
+
+        // RYUJINX_INPUT_LATENCY=1: every 5 s, logs how long pumps waited for the main thread and how far apart they
+        // ran. Controller state is only as fresh as the last pump, so these are Borgir's share of controller lag.
+        private static readonly bool _latencyProbe = Environment.GetEnvironmentVariable("RYUJINX_INPUT_LATENCY") == "1";
+        private long _probeStart;
+        private long _probeLastPump;
+        private int _probePumps;
+        private long _probeDelayTicks;
+        private long _probeMaxDelayTicks;
+        private long _probeMaxGapTicks;
 
         public event Action<SDL_JoystickID> OnJoyStickConnected;
         public event Action<SDL_JoystickID> OnJoystickDisconnected;
@@ -163,22 +178,78 @@ namespace Ryujinx.SDL3.Common
 
         private unsafe void EventWorker()
         {
-            const int WaitTimeMs = 10;
+            // Controller state only updates when events are pumped, and the game reads it about every millisecond,
+            // so this is how stale a button press can be before the game sees it (10 ms upstream).
+            const int WaitTimeMs = 2;
 
             using ManualResetEventSlim waitHandle = new(false);
 
             while (_isRunning)
             {
-                MainThreadDispatcher?.Invoke(() =>
+                Action<Action> dispatcher = MainThreadDispatcher;
+
+                if (dispatcher != null && Interlocked.CompareExchange(ref _pumpQueued, 1, 0) == 0)
                 {
-                    SDL_Event evnt = new();
-                    while (SDL_PollEvent(&evnt))
+                    long queued = Stopwatch.GetTimestamp();
+
+                    dispatcher(() =>
                     {
-                        HandleSDLEvent(ref evnt);
-                    }
-                });
+                        try
+                        {
+                            if (_latencyProbe)
+                            {
+                                NotePump(queued);
+                            }
+
+                            SDL_Event evnt = new();
+                            while (SDL_PollEvent(&evnt))
+                            {
+                                HandleSDLEvent(ref evnt);
+                            }
+                        }
+                        finally
+                        {
+                            Volatile.Write(ref _pumpQueued, 0);
+                        }
+                    });
+                }
 
                 waitHandle.Wait(WaitTimeMs);
+            }
+        }
+
+        private void NotePump(long queued)
+        {
+            long now = Stopwatch.GetTimestamp();
+            long delay = now - queued;
+
+            if (_probeStart == 0)
+            {
+                _probeStart = now;
+            }
+            else
+            {
+                _probeMaxGapTicks = Math.Max(_probeMaxGapTicks, now - _probeLastPump);
+            }
+
+            _probeLastPump = now;
+            _probePumps++;
+            _probeDelayTicks += delay;
+            _probeMaxDelayTicks = Math.Max(_probeMaxDelayTicks, delay);
+
+            if (now - _probeStart >= Stopwatch.Frequency * 5)
+            {
+                double ms = 1000.0 / Stopwatch.Frequency;
+
+                Logger.Info?.Print(LogClass.Application,
+                    $"Input pump: {_probePumps} pumps in {(now - _probeStart) * ms:F0} ms, main thread delay avg {_probeDelayTicks * ms / _probePumps:F2} ms, " +
+                    $"max {_probeMaxDelayTicks * ms:F1} ms, longest gap between pumps {_probeMaxGapTicks * ms:F1} ms");
+
+                _probeStart = now;
+                _probePumps = 0;
+                _probeDelayTicks = 0;
+                _probeMaxDelayTicks = 0;
+                _probeMaxGapTicks = 0;
             }
         }
 

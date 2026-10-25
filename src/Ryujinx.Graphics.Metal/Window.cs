@@ -123,7 +123,9 @@ namespace Ryujinx.Graphics.Metal
 
                 ResizeIfNeeded();
 
+                long ledger = StallLedger.Begin();
                 CAMetalDrawable drawable = new(ObjectiveC.IntPtr_objc_msgSend(_metalLayer, "nextDrawable"));
+                StallLedger.End(StallKind.RenderDrawable, ledger);
 
                 // nextDrawable returns an autoreleased object and this thread has no
                 // draining pool; own it until presentation (released after
