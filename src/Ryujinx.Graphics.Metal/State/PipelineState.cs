@@ -375,6 +375,7 @@ namespace Ryujinx.Graphics.Metal
         private static readonly bool _asyncPsoDefault = Environment.GetEnvironmentVariable("RYUJINX_METAL_ASYNC_PSO") != "0";
         public static bool AsyncPso = _asyncPsoDefault;
         public static long PsoRenderQueued;
+        public static long ProgramPendingSkips;
         public static long PsoRenderPendingSkips;
 
         // Per-frame wait budget. A draw whose pipeline is still building waits for it,
@@ -488,6 +489,23 @@ namespace Ryujinx.Graphics.Metal
 
         public MTLRenderPipelineState CreateRenderPipeline(MTLDevice device, Program program)
         {
+            // A program bound before its shaders compiled ("Compile shaders in the background"): skip the draw
+            // until they have, except a fullscreen one, which waits for them as it would for its pipeline.
+            if (program.IsCompiling)
+            {
+                if (!(_fullscreenSync && CurrentDrawVertices <= 6))
+                {
+                    ProgramPendingSkips++;
+                    PsoFramePendingSkips++;
+
+                    return default;
+                }
+
+                long ledger = StallLedger.Begin();
+                program.CheckProgramLink(true);
+                StallLedger.End(StallKind.RenderProgramWait, ledger);
+            }
+
             program.NotePrewarmDraw(ref Internal);
 
             if (program.TryGetGraphicsPipeline(ref Internal, out MTLRenderPipelineState pipelineState))

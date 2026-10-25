@@ -91,6 +91,7 @@ namespace Ryujinx.Ava.Systems.Configuration
             Graphics.EnableShaderCache.Value = cff.EnableShaderCache;
             Graphics.EnableTextureRecompression.Value = cff.EnableTextureRecompression;
             Graphics.EnableMacroHLE.Value = cff.EnableMacroHLE;
+            Graphics.EnableAsyncShaders.Value = cff.EnableAsyncShaders;
             Graphics.EnableColorSpacePassthrough.Value = cff.EnableColorSpacePassthrough;
 
             System.Language.Value = cff.SystemLanguage;

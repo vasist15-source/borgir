@@ -1310,6 +1310,23 @@ namespace Ryujinx.Graphics.Metal
             // yet is compiled now.
             prg.EnsureCompiled(background: false);
 
+            if (prg.IsCompiling)
+            {
+                // Bound before its shaders have compiled, which only "Compile shaders in the background" allows. A
+                // graphics program is bound anyway and its draws are skipped until it is ready (see
+                // PipelineState.CreateRenderPipeline); a compute program's results are read later, so wait for it.
+                if (AsyncShaders.Enabled && !prg.IsCompute)
+                {
+                    BindRenderProgram(prg);
+
+                    return;
+                }
+
+                long ledger = StallLedger.Begin();
+                prg.CheckProgramLink(true);
+                StallLedger.End(StallKind.RenderProgramWait, ledger);
+            }
+
             if (prg.VertexFunction == IntPtr.Zero && prg.ComputeFunction == IntPtr.Zero)
             {
                 if (prg.FragmentFunction == IntPtr.Zero)
@@ -1325,14 +1342,7 @@ namespace Ryujinx.Graphics.Metal
 
             if (prg.VertexFunction != IntPtr.Zero)
             {
-                _currentState.RenderProgram = prg;
-                _currentState.FetchVariant = null;
-                _currentState.DrawRingCb1Address = 0;
-                _currentState.DrawRingCb3Address = 0;
-                _currentState.DrawRingTex8ResourceId = 0;
-                _currentState.DrawRingTexAResourceId = 0;
-
-                SignalDirty(DirtyFlags.RenderPipeline | DirtyFlags.ArgBuffers);
+                BindRenderProgram(prg);
             }
             else if (prg.ComputeFunction != IntPtr.Zero)
             {
@@ -1340,6 +1350,18 @@ namespace Ryujinx.Graphics.Metal
 
                 SignalDirty(DirtyFlags.ComputePipeline | DirtyFlags.ArgBuffers);
             }
+        }
+
+        private readonly void BindRenderProgram(Program prg)
+        {
+            _currentState.RenderProgram = prg;
+            _currentState.FetchVariant = null;
+            _currentState.DrawRingCb1Address = 0;
+            _currentState.DrawRingCb3Address = 0;
+            _currentState.DrawRingTex8ResourceId = 0;
+            _currentState.DrawRingTexAResourceId = 0;
+
+            SignalDirty(DirtyFlags.RenderPipeline | DirtyFlags.ArgBuffers);
         }
 
         public readonly void UpdateRasterizerDiscard(bool discard)

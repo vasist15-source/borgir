@@ -85,6 +85,25 @@ namespace Ryujinx.Graphics.GAL.Multithreading.Resources
         }
 
         /// <summary>
+        /// Process the queue until the given program has been created, which starts its compilation.
+        /// </summary>
+        /// <param name="program">The program to wait for</param>
+        public void WaitForProgramCreated(ThreadedProgram program)
+        {
+            Span<SpinWait> spinWait = stackalloc SpinWait[1];
+
+            while (program.Base == null)
+            {
+                ProcessQueue();
+
+                if (program.Base == null)
+                {
+                    spinWait[0].SpinOnce(-1);
+                }
+            }
+        }
+
+        /// <summary>
         /// Process the queue until the given program has finished compiling.
         /// This will begin compilation of other programs on the queue as well.
         /// </summary>

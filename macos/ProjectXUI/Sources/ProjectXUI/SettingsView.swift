@@ -189,13 +189,15 @@ private struct GraphicsSettings: View {
                 }
                 Toggle("Shader cache", isOn: settings.bool("shaderCache"))
                     .help("Keeps translated shaders on disk so later launches skip translating them again.")
+                Toggle("Compile shaders in the background", isOn: settings.bool("asyncShaders"))
+                    .help("Fewer freezes when a game uses a new shader; objects that use it appear a few frames late.")
                 Toggle("Macro HLE", isOn: settings.bool("macroHLE"))
                     .help("Runs some GPU macros natively instead of emulating them. Faster; turn off only to debug.")
                 Toggle("Color space passthrough", isOn: settings.bool("colorSpacePassthrough"))
             } header: {
                 Text("Renderer")
             } footer: {
-                Text("Multithreading, the shader cache and Macro HLE apply the next time a game starts.")
+                Text("Compiling shaders in the background shortens the freeze when a game first uses a shader, but objects that use it can appear a few frames late. It applies at once. Multithreading, the shader cache and Macro HLE apply the next time a game starts.")
             }
         }
         .formStyle(.grouped)

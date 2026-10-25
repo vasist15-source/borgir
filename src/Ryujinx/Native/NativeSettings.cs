@@ -33,6 +33,7 @@ namespace Ryujinx.Ava.Native
                 ["customRefreshRate"] = Config.Graphics.CustomVSyncInterval.Value,
                 ["shaderCache"] = Config.Graphics.EnableShaderCache.Value,
                 ["macroHLE"] = Config.Graphics.EnableMacroHLE.Value,
+                ["asyncShaders"] = Config.Graphics.EnableAsyncShaders.Value,
                 ["colorSpacePassthrough"] = Config.Graphics.EnableColorSpacePassthrough.Value,
                 ["backendThreading"] = Config.Graphics.BackendThreading.Value.ToString(),
 
@@ -134,6 +135,11 @@ namespace Ryujinx.Ava.Native
                     break;
                 case "macroHLE":
                     Config.Graphics.EnableMacroHLE.Value = Bool(value);
+                    break;
+                case "asyncShaders":
+                    // Read at every program bind and draw, so it applies at once, even while a game runs.
+                    Config.Graphics.EnableAsyncShaders.Value = Bool(value);
+                    Ryujinx.Graphics.GAL.AsyncShaders.Enabled = Config.Graphics.EnableAsyncShaders.Value;
                     break;
                 case "colorSpacePassthrough":
                     Config.Graphics.EnableColorSpacePassthrough.Value = Bool(value);

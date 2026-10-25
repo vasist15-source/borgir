@@ -262,6 +262,11 @@ namespace Ryujinx.Ava.Systems.Configuration
         public bool EnableMacroHLE { get; set; }
 
         /// <summary>
+        /// Skips draws whose new shaders are still compiling instead of waiting for them
+        /// </summary>
+        public bool EnableAsyncShaders { get; set; }
+
+        /// <summary>
         /// Enables or disables color space passthrough, if available.
         /// </summary>
         public bool EnableColorSpacePassthrough { get; set; }

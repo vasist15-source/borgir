@@ -1754,6 +1754,12 @@ namespace Ryujinx.Graphics.Metal
             return (type == ResourceType.TextureAndSampler ? 2 : 1);
         }
 
+        /// <summary>
+        /// True while a new program's shaders are still compiling (never for one from the shader cache, which
+        /// compiles in place when first bound).
+        /// </summary>
+        public bool IsCompiling => !_deferred && _status == ProgramLinkStatus.Incomplete;
+
         public ProgramLinkStatus CheckProgramLink(bool blocking)
         {
             if (blocking)

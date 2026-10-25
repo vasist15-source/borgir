@@ -44,6 +44,7 @@ namespace Ryujinx.Ava.Native
                 to.EnableCustomVSyncInterval = from.EnableCustomVSyncInterval;
             },
             ["customRefreshRate"] = (from, to) => to.CustomVSyncInterval = from.CustomVSyncInterval,
+            ["asyncShaders"] = (from, to) => to.EnableAsyncShaders = from.EnableAsyncShaders,
             ["dockedMode"] = (from, to) => to.DockedMode = from.DockedMode,
             ["language"] = (from, to) => to.SystemLanguage = from.SystemLanguage,
             ["region"] = (from, to) => to.SystemRegion = from.SystemRegion,
@@ -354,6 +355,7 @@ namespace Ryujinx.Ava.Native
                 case "dockedMode":
                 case "ignoreMissingServices":
                 case "hypervisor":
+                case "asyncShaders":
                     return NativeSettings.Bool(value);
                 case "resScale":
                     double scale = Math.Clamp(NativeSettings.Number(value), 0.1, 8);

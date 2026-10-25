@@ -234,6 +234,7 @@ namespace Ryujinx.Ava.Native
             GraphicsConfig.EnableShaderCache = config.Graphics.EnableShaderCache;
             GraphicsConfig.EnableTextureRecompression = config.Graphics.EnableTextureRecompression;
             GraphicsConfig.EnableMacroHLE = config.Graphics.EnableMacroHLE;
+            Ryujinx.Graphics.GAL.AsyncShaders.Enabled = config.Graphics.EnableAsyncShaders;
         }
 
         public static void OnHostExited(NativeHost host)

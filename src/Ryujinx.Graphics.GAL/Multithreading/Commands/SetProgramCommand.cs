@@ -19,7 +19,17 @@ namespace Ryujinx.Graphics.GAL.Multithreading.Commands
             ThreadedProgram program = command._program.GetAs<ThreadedProgram>(threaded);
 
             long ledger = program.Compiled ? 0 : StallLedger.Begin();
-            threaded.Programs.WaitForProgram(program);
+
+            if (AsyncShaders.Enabled)
+            {
+                // The renderer skips the program's draws until it has compiled (or waits itself where it cannot).
+                threaded.Programs.WaitForProgramCreated(program);
+            }
+            else
+            {
+                threaded.Programs.WaitForProgram(program);
+            }
+
             StallLedger.End(StallKind.RenderProgramWait, ledger);
 
             renderer.Pipeline.SetProgram(program.Base);

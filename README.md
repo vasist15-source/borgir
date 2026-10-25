@@ -14,6 +14,9 @@
   it runs; add cheat files).
 - **Per-game settings.** A game can have its own resolution, docked mode, V-Sync, hypervisor, DRAM size and more;
   everything else follows the global settings. Changes made in a game's overlay become that game's own settings.
+- **Background shader compiling (optional).** Settings › Graphics can compile new shaders without waiting for them,
+  for shorter freezes when a game first uses one; objects that use a new shader appear a few frames late. Off by
+  default, and can be set per game.
 - **Controllers.** Settings › Input sets up players 1 to 8 and Handheld: device, controller type, button remapping
   (press the key or button), stick dead zones, rumble and motion. When a game asks for controllers, a prompt shows who
   has what and opens these settings.

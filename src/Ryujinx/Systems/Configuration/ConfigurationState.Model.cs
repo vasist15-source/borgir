@@ -625,6 +625,11 @@ namespace Ryujinx.Ava.Systems.Configuration
             public ReactiveObject<bool> EnableMacroHLE { get; private set; }
 
             /// <summary>
+            /// Skips draws whose new shaders are still compiling instead of waiting for them
+            /// </summary>
+            public ReactiveObject<bool> EnableAsyncShaders { get; private set; }
+
+            /// <summary>
             /// Enables or disables color space passthrough, if available.
             /// </summary>
             public ReactiveObject<bool> EnableColorSpacePassthrough { get; private set; }
@@ -683,6 +688,8 @@ namespace Ryujinx.Ava.Systems.Configuration
                 PreferredGpu.LogChangesToValue(nameof(PreferredGpu));
                 EnableMacroHLE = new ReactiveObject<bool>();
                 EnableMacroHLE.LogChangesToValue(nameof(EnableMacroHLE));
+                EnableAsyncShaders = new ReactiveObject<bool>();
+                EnableAsyncShaders.LogChangesToValue(nameof(EnableAsyncShaders));
                 EnableColorSpacePassthrough = new ReactiveObject<bool>();
                 EnableColorSpacePassthrough.LogChangesToValue(nameof(EnableColorSpacePassthrough));
                 AntiAliasing = new ReactiveObject<AntiAliasing>();

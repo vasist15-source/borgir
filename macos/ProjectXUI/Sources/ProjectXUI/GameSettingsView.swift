@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Settings one game can have its own value for, in the order the sheet shows them.
 enum GameSettingKeys {
-    static let graphics = ["resScale", "aspectRatio", "scalingFilter", "scalingFilterLevel", "maxAnisotropy", "vsyncMode", "customRefreshRate"]
+    static let graphics = ["resScale", "aspectRatio", "scalingFilter", "scalingFilterLevel", "maxAnisotropy", "vsyncMode", "customRefreshRate", "asyncShaders"]
     static let system = ["dockedMode", "language", "region", "ignoreMissingServices"]
     static let cpu = ["hypervisor", "memoryManagerMode", "dramSize"]
 
@@ -16,6 +16,7 @@ enum GameSettingKeys {
         case "maxAnisotropy": return "anisotropic filtering"
         case "vsyncMode": return "V-Sync"
         case "customRefreshRate": return "refresh rate"
+        case "asyncShaders": return "background shader compiling"
         case "dockedMode": return "docked mode"
         case "language": return "language"
         case "region": return "region"
@@ -125,6 +126,8 @@ struct GameSettingsSheet: View {
                             Choice(value: .number(Double($0)), label: "\($0) Hz")
                         })
                     }
+
+                    row("Compile Shaders in Background", "asyncShaders", onOff)
                 } header: {
                     Text("Graphics")
                 }
