@@ -21,6 +21,8 @@ namespace Ryujinx.HLE.HOS.Services.Hid
         private ControllerType[] _configuredTypes;
         private readonly KEvent[] _styleSetUpdateEvents;
         private readonly bool[] _supportedPlayers;
+        // Players the controller applet disconnected because the game took fewer than were set up (null: none).
+        private bool[] _heldOutPlayers;
         private VibrationValue _neutralVibrationValue = new()
         {
             AmplitudeLow = 0.01f,
@@ -107,8 +109,9 @@ namespace Ryujinx.HLE.HOS.Services.Hid
                 }
 
                 ControllerType currentType = (ControllerType)nPadsSpan[i].InternalState.StyleSet;
+                bool connected = currentType != ControllerType.None || _heldOutPlayers?[i] == true;
 
-                if (currentType != ControllerType.None && (npad & acceptedTypes) != 0 && _supportedPlayers[i])
+                if (connected && (npad & acceptedTypes) != 0 && _supportedPlayers[i])
                 {
                     configuredCount++;
                     if (primaryIndex == PlayerIndex.Unknown)
@@ -124,6 +127,50 @@ namespace Ryujinx.HLE.HOS.Services.Hid
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Disconnects all but the first <paramref name="count"/> players the game accepts, as the console's controller
+        /// applet does when a game takes fewer players than are connected.
+        /// </summary>
+        public void KeepFirstPlayers(int count, ControllerType acceptedTypes)
+        {
+            bool[] heldOut = new bool[MaxControllers];
+            Span<NpadState> nPadsSpan = _device.Hid.SharedMemory.Npads.AsSpan();
+            int kept = 0;
+
+            for (int i = 0; i < MaxControllers; ++i)
+            {
+                ControllerType npad = _configuredTypes[i];
+
+                if (npad == ControllerType.None || (npad == ControllerType.Handheld && _device.System.State.DockedMode))
+                {
+                    continue;
+                }
+
+                bool connected = (ControllerType)nPadsSpan[i].InternalState.StyleSet != ControllerType.None || _heldOutPlayers?[i] == true;
+
+                if (connected && (npad & acceptedTypes) != 0 && _supportedPlayers[i] && kept < count)
+                {
+                    kept++;
+                }
+                else
+                {
+                    heldOut[i] = true;
+                }
+            }
+
+            _heldOutPlayers = heldOut;
+
+            Logger.Info?.Print(LogClass.Hid, $"Controller applet kept {kept} player(s); the others are disconnected for this game");
+        }
+
+        /// <summary>
+        /// Reconnects the players KeepFirstPlayers disconnected.
+        /// </summary>
+        public void KeepAllPlayers()
+        {
+            _heldOutPlayers = null;
         }
 
         public void Configure(params ReadOnlySpan<ControllerConfig> configs)
@@ -199,8 +246,8 @@ namespace Ryujinx.HLE.HOS.Services.Hid
                     config = ControllerType.JoyconPair;
                 }
 
-                // Check StyleSet and PlayerSet
-                if ((config & SupportedStyleSets) == 0 || !_supportedPlayers[i])
+                // Check StyleSet and PlayerSet, and the players the controller applet disconnected
+                if ((config & SupportedStyleSets) == 0 || !_supportedPlayers[i] || _heldOutPlayers?[i] == true)
                 {
                     config = ControllerType.None;
                 }

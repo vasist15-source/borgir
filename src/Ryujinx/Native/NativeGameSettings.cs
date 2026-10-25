@@ -37,6 +37,7 @@ namespace Ryujinx.Ava.Native
             ["aspectRatio"] = (from, to) => to.AspectRatio = from.AspectRatio,
             ["maxAnisotropy"] = (from, to) => to.MaxAnisotropy = from.MaxAnisotropy,
             ["scalingFilter"] = (from, to) => to.ScalingFilter = from.ScalingFilter,
+            ["scalingFilterLevel"] = (from, to) => to.ScalingFilterLevel = from.ScalingFilterLevel,
             ["vsyncMode"] = (from, to) =>
             {
                 to.VSyncMode = from.VSyncMode;
@@ -60,6 +61,8 @@ namespace Ryujinx.Ava.Native
         private static JsonObject _overrides;
         private static JsonObject _globalValues;
         private static ConfigurationFileFormat _globalFile;
+
+        public static bool IsOverridable(string key) => _overridable.ContainsKey(key);
 
         /// <summary>
         /// The keys the running game has its own value for.
@@ -359,6 +362,8 @@ namespace Ryujinx.Ava.Native
                     return (float)NativeSettings.Number(value);
                 case "customRefreshRate":
                     return Math.Clamp((int)NativeSettings.Number(value), 1, 999);
+                case "scalingFilterLevel":
+                    return Math.Clamp((int)NativeSettings.Number(value), 0, 100);
                 case "aspectRatio":
                     return NativeSettings.EnumValue<AspectRatio>(value).ToString();
                 case "scalingFilter":

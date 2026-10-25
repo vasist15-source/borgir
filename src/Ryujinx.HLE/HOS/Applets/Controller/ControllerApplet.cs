@@ -83,10 +83,25 @@ namespace Ryujinx.HLE.HOS.Applets
                 playerMin = playerMax = 1;
             }
 
+            // A game asking for more players again gets back the ones an earlier one-player request disconnected.
+            if (playerMax > 1)
+            {
+                _system.Device.Hid.Npads.KeepAllPlayers();
+            }
+
             int configuredCount;
             PlayerIndex primaryIndex;
             while (!_system.Device.Hid.Npads.Validate(playerMin, playerMax, (ControllerType)privateArg.NpadStyleSet, out configuredCount, out primaryIndex))
             {
+                // More controllers than the game takes (a one-player game with four set up): like the console's
+                // applet, keep the first ones connected and disconnect the rest, or the game keeps asking.
+                if (configuredCount > playerMax && primaryIndex != PlayerIndex.Unknown)
+                {
+                    _system.Device.Hid.Npads.KeepFirstPlayers(playerMax, (ControllerType)privateArg.NpadStyleSet);
+                    configuredCount = playerMax;
+                    break;
+                }
+
                 ControllerAppletUIArgs uiArgs = new()
                 {
                     PlayerCountMin = playerMin,

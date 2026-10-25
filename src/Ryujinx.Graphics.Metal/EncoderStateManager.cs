@@ -2172,7 +2172,7 @@ namespace Ryujinx.Graphics.Metal
             if (autoBuffer != null)
             {
                 int offset = 0;
-                MTLBuffer mtlBuffer;
+                DisposableBuffer bound;
 
                 if (range.HasValue)
                 {
@@ -2180,23 +2180,23 @@ namespace Ryujinx.Graphics.Metal
 
                     if (range.Value.Write)
                     {
-                        mtlBuffer = autoBuffer.Get(_pipeline.Cbs, offset, range.Value.Size, true).Value;
+                        bound = autoBuffer.Get(_pipeline.Cbs, offset, range.Value.Size, true);
                     }
                     else
                     {
                         // A read only binding may be served from a mirror holding writes
                         // that have not been put into the buffer itself, which is what
                         // keeps those writes from needing a blit inside the render pass.
-                        mtlBuffer = autoBuffer.GetMirrorable(_pipeline.Cbs, ref offset, range.Value.Size, out _).Value;
+                        bound = autoBuffer.GetMirrorable(_pipeline.Cbs, ref offset, range.Value.Size, out _);
                     }
                 }
                 else
                 {
-                    mtlBuffer = autoBuffer.Get(_pipeline.Cbs).Value;
+                    bound = autoBuffer.Get(_pipeline.Cbs);
                 }
 
-                gpuAddress = mtlBuffer.GpuAddress + (ulong)offset;
-                nativePtr = mtlBuffer.NativePtr;
+                gpuAddress = bound.GpuAddress + (ulong)offset;
+                nativePtr = bound.Value.NativePtr;
             }
 
             return (gpuAddress, nativePtr);

@@ -1,4 +1,5 @@
 using Ryujinx.Common;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Common.Configuration;
 using Ryujinx.Graphics.GAL.Multithreading.Commands;
 using Ryujinx.Graphics.GAL.Multithreading.Commands.Buffer;
@@ -104,6 +105,7 @@ namespace Ryujinx.Graphics.GAL.Multithreading
             _running = true;
 
             _backendThread = Thread.CurrentThread;
+            ThreadQos.MarkTimeCritical();
 
             _gpuThread = new Thread(gpuLoop)
             {

@@ -9,9 +9,16 @@ namespace Ryujinx.Graphics.Metal
     {
         public MTLBuffer Value { get; }
 
+        /// <summary>
+        /// The buffer's GPU address, read once: binding asked Metal for it on every draw, about a tenth of the render
+        /// thread's time in Breath of the Wild. A buffer's address never changes.
+        /// </summary>
+        public ulong GpuAddress { get; }
+
         public DisposableBuffer(MTLBuffer buffer)
         {
             Value = buffer;
+            GpuAddress = buffer != IntPtr.Zero ? buffer.GpuAddress : 0;
         }
 
         // Marking the buffer volatile here tells the system its contents may be

@@ -163,7 +163,7 @@ private struct GraphicsSettings: View {
             } header: {
                 Text("Image")
             } footer: {
-                Text("These also appear in the game overlay, and apply while a game runs.")
+                Text("These apply at once, even while a game runs. Changed from a game's overlay, they become that game's own settings.")
             }
 
             Section("Frame Pacing") {

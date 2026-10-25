@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Settings one game can have its own value for, in the order the sheet shows them.
 enum GameSettingKeys {
-    static let graphics = ["resScale", "aspectRatio", "scalingFilter", "maxAnisotropy", "vsyncMode", "customRefreshRate"]
+    static let graphics = ["resScale", "aspectRatio", "scalingFilter", "scalingFilterLevel", "maxAnisotropy", "vsyncMode", "customRefreshRate"]
     static let system = ["dockedMode", "language", "region", "ignoreMissingServices"]
     static let cpu = ["hypervisor", "memoryManagerMode", "dramSize"]
 
@@ -12,6 +12,7 @@ enum GameSettingKeys {
         case "resScale": return "resolution"
         case "aspectRatio": return "aspect ratio"
         case "scalingFilter": return "scaling filter"
+        case "scalingFilterLevel": return "FSR sharpness"
         case "maxAnisotropy": return "anisotropic filtering"
         case "vsyncMode": return "V-Sync"
         case "customRefreshRate": return "refresh rate"
@@ -101,6 +102,11 @@ struct GameSettingsSheet: View {
                         Choice(value: .text("Nearest"), label: "Nearest"),
                         Choice(value: .text("Fsr"), label: "AMD FSR Sharpening"),
                     ])
+                    if effective("scalingFilter") == .text("Fsr") {
+                        row("Sharpness", "scalingFilterLevel", [0, 25, 50, 80, 100].map {
+                            Choice(value: .number(Double($0)), label: "\($0)%")
+                        })
+                    }
                     row("Anisotropic Filtering", "maxAnisotropy", [
                         Choice(value: .number(-1), label: "Auto"),
                         Choice(value: .number(2), label: "2x"),

@@ -80,6 +80,9 @@ namespace Ryujinx.Cpu.AppleHv
         private IHvExecutionContext _impl;
         private int _shouldStep;
         private readonly ExceptionCallbacks _exceptionCallbacks;
+
+        // Made once: passing the SwapContext method group allocated a delegate every time a vCPU was rented or returned.
+        private readonly Action<IHvExecutionContext> _swapContext;
         private int _interruptRequested;
 
         // GPU Sync control
@@ -92,6 +95,7 @@ namespace Ryujinx.Cpu.AppleHv
             _shadowContext = new HvExecutionContextShadow();
             _impl = _shadowContext;
             _exceptionCallbacks = exceptionCallbacks;
+            _swapContext = SwapContext;
             Running = true;
         }
 
@@ -154,7 +158,7 @@ namespace Ryujinx.Cpu.AppleHv
 
         public unsafe void Execute(HvMemoryManager memoryManager, ulong address)
         {
-            HvVcpu vcpu = HvVcpuPool.Instance.Create(memoryManager.AddressSpace, _shadowContext, SwapContext);
+            HvVcpu vcpu = HvVcpuPool.Instance.Create(memoryManager.AddressSpace, _shadowContext, _swapContext);
             HvApi.hv_vcpu_set_reg(vcpu.Handle, HvReg.PC, address).ThrowOnError();
 
             _syncCounter = 0;
@@ -223,7 +227,7 @@ namespace Ryujinx.Cpu.AppleHv
                 }
             }
 
-            HvVcpuPool.Instance.Destroy(vcpu, SwapContext);
+            HvVcpuPool.Instance.Destroy(vcpu, _swapContext);
         }
 
         // TryGpuSync() is called periodically in the main Execute() loop. The "syncing" value can be tuned based on gameplay results.
@@ -369,12 +373,12 @@ namespace Ryujinx.Cpu.AppleHv
 
         private void ReturnToPool(HvVcpu vcpu)
         {
-            HvVcpuPool.Instance.Return(vcpu, SwapContext);
+            HvVcpuPool.Instance.Return(vcpu, _swapContext);
         }
 
         private HvVcpu RentFromPool(HvAddressSpace addressSpace, HvVcpu vcpu)
         {
-            return HvVcpuPool.Instance.Rent(addressSpace, _shadowContext, vcpu, SwapContext);
+            return HvVcpuPool.Instance.Rent(addressSpace, _shadowContext, vcpu, _swapContext);
         }
 
         private void SwapContext(IHvExecutionContext newContext)

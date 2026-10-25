@@ -373,7 +373,7 @@ namespace Ryujinx.Ava.Native
                         ["ownSettings"] = NativeGameSettings.ActiveKeys(),
                     };
                 case "settings.set":
-                    return SetSetting(String(args, "key"), args["value"]);
+                    return SetSetting(String(args, "key"), args["value"], args["game"]?.GetValue<bool>() ?? false);
 
                 case "keys.install":
                     return InstallKeys(String(args, "path"));
@@ -819,7 +819,10 @@ namespace Ryujinx.Ava.Native
 
             Directory.CreateDirectory(path);
 
-            return Reveal(path);
+            // Open the folder itself, as Ryujinx does; revealing it would show the folder above with this one selected.
+            Process.Start(new ProcessStartInfo("/usr/bin/open", [path]) { UseShellExecute = false });
+
+            return NativeBridge.Ok();
         }
 
         private static string SaveDirectory(ulong titleId)
@@ -831,9 +834,16 @@ namespace Ryujinx.Ava.Native
                 return null;
             }
 
-            // Save data lives under bis/user/save/<save data id>; ask the save data index which one belongs to this title.
+            // Save data lives under bis/user/save/<save data id>; ask the save data index which one belongs to this title:
+            // the active profile's, or, for games that save per console, the device save.
             SaveDataFilter filter = SaveDataFilter.Make(titleId, SaveDataType.Account, user.UserId.ToLibHac(), saveDataId: default, index: default);
             Result result = LibHacHorizonManager.RyujinxClient.Fs.FindSaveDataWithFilter(out SaveDataInfo saveDataInfo, SaveDataSpaceId.User, in filter);
+
+            if (result.IsFailure())
+            {
+                filter = SaveDataFilter.Make(titleId, SaveDataType.Device, userId: default, saveDataId: default, index: default);
+                result = LibHacHorizonManager.RyujinxClient.Fs.FindSaveDataWithFilter(out saveDataInfo, SaveDataSpaceId.User, in filter);
+            }
 
             if (result.IsFailure())
             {
@@ -856,21 +866,44 @@ namespace Ryujinx.Ava.Native
 
         // Settings
 
-        private static JsonObject SetSetting(string key, JsonNode value)
+        /// <summary>
+        /// Changes a setting. With <paramref name="forGame"/> (the in-game overlay and menu) a setting a game can have
+        /// its own value for becomes the running game's own, leaving the global one as it is.
+        /// </summary>
+        private static JsonObject SetSetting(string key, JsonNode value, bool forGame)
         {
-            try
+            ulong running = RunningTitleId;
+
+            if (forGame && running != 0 && NativeGameSettings.IsOverridable(key))
             {
-                NativeSettings.Set(key, value);
+                JsonObject reply = NativeGameSettings.Set(running.ToString("x16"), key, value);
+
+                if (reply["ok"]?.GetValue<bool>() != true)
+                {
+                    return reply;
+                }
             }
-            catch (ArgumentException ex)
+            else
             {
-                return NativeBridge.Error(ex.Message);
+                try
+                {
+                    NativeSettings.Set(key, value);
+                }
+                catch (ArgumentException ex)
+                {
+                    return NativeBridge.Error(ex.Message);
+                }
+
+                UpdateGraphicsConfig();
+                SaveConfigSoon();
             }
 
-            UpdateGraphicsConfig();
-            SaveConfigSoon();
-
-            return new JsonObject { ["ok"] = true, ["settings"] = NativeSettings.Snapshot() };
+            return new JsonObject
+            {
+                ["ok"] = true,
+                ["settings"] = NativeSettings.Snapshot(),
+                ["ownSettings"] = NativeGameSettings.ActiveKeys(),
+            };
         }
 
         // Keys, firmware, profiles

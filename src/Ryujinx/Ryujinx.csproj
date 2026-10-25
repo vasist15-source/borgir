@@ -59,10 +59,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\..\distribution\windows\alsoft.ini" Condition="'$(RuntimeIdentifier)' != 'linux-x64' AND '$(RuntimeIdentifier)' != 'linux-arm64' AND '$(RuntimeIdentifier)' != 'osx-x64' AND '$(RuntimeIdentifier)' != 'osx-arm64'">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      <TargetPath>alsoft.ini</TargetPath>
-    </Content>
     <Content Include="..\..\distribution\legal\THIRDPARTY.md">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <TargetPath>THIRDPARTY.md</TargetPath>
@@ -72,16 +68,6 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <TargetPath>LICENSE.txt</TargetPath>
       <Visible>False</Visible>
-    </Content>
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64' OR '$(RuntimeIdentifier)' == 'linux-arm64' OR ('$(RuntimeIdentifier)' == '' AND $([MSBuild]::IsOSPlatform('Linux')))">
-    <Content Include="..\..\distribution\linux\Ryujinx.sh">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\..\distribution\linux\mime\Ryujinx.xml">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      <TargetPath>mime\Ryujinx.xml</TargetPath>
     </Content>
   </ItemGroup>
 

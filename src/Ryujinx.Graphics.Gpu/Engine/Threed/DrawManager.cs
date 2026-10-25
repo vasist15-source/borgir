@@ -86,10 +86,28 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
             Environment.GetEnvironmentVariable("RYUJINX_WATCH_BARRIER") == "1";
         private static long _skipListStamp = -1;
         private static int _skipCheckCounter;
+        private static long _skipCheckTime;
+        private static long _traceCheckTime;
+
+        /// <summary>
+        /// Whether a second has passed since the last look for a diagnostic trigger file.
+        /// </summary>
+        private static bool DiagnosticFileCheckDue(ref long lastCheck)
+        {
+            long now = Environment.TickCount64;
+
+            if (now - lastCheck < 1000)
+            {
+                return false;
+            }
+
+            lastCheck = now;
+            return true;
+        }
 
         private static void ReloadSkipListIfChanged()
         {
-            if ((++_skipCheckCounter & 0xFF) != 0)
+            if ((++_skipCheckCounter & 0xFF) != 0 || !DiagnosticFileCheckDue(ref _skipCheckTime))
             {
                 return;
             }
@@ -163,9 +181,9 @@ namespace Ryujinx.Graphics.Gpu.Engine.Threed
         {
             if (_traceRemaining <= 0)
             {
-                // Only look for the trigger file every 512 draws to keep the
-                // steady-state cost negligible.
-                if ((++_traceCheckCounter & 0x1FF) != 0)
+                // Only look for the trigger file every 512 draws, and at most once a second:
+                // at 4000 draws a frame even every 512th draw was about 2% of the GPU thread.
+                if ((++_traceCheckCounter & 0x1FF) != 0 || !DiagnosticFileCheckDue(ref _traceCheckTime))
                 {
                     return;
                 }

@@ -168,7 +168,7 @@ struct OverlayView: View {
                     .frame(height: 22)
 
                 overlayButton(session.status?.docked == false ? "Handheld" : "Docked", systemImage: session.status?.docked == false ? "iphone.landscape" : "tv") {
-                    model.settings.set("dockedMode", !(session.status?.docked ?? true))
+                    model.settings.set("dockedMode", !(session.status?.docked ?? true), forGame: true)
                 }
 
                 overlayButton(vsyncLabel, systemImage: "rectangle.on.rectangle") {
@@ -286,7 +286,7 @@ private struct GraphicsButton: View {
         .help("Graphics")
         .popover(isPresented: $open, arrowEdge: .top) {
             Form {
-                GraphicsQuickSettings()
+                GraphicsQuickSettings(forGame: true)
             }
             .formStyle(.columns)
             .padding(18)
@@ -298,26 +298,28 @@ private struct GraphicsButton: View {
 
 /// The graphics options that apply while a game runs, as rows for a Form (Settings and the overlay's popover).
 struct GraphicsQuickSettings: View {
+    /// In the in-game overlay: changes become the running game's own settings.
+    var forGame = false
     @Environment(AppModel.self) private var model
 
     var body: some View {
         let settings = model.settings
 
         Group {
-            Picker("Resolution", selection: settings.double("resScale")) {
+            Picker("Resolution", selection: settings.double("resScale", forGame: forGame)) {
                 Text("Native (720p/1080p)").tag(1.0)
                 Text("2x (1440p/2160p)").tag(2.0)
                 Text("3x (2160p/3240p)").tag(3.0)
                 Text("4x (2880p/4320p)").tag(4.0)
             }
 
-            Picker("Aspect Ratio", selection: settings.string("aspectRatio")) {
+            Picker("Aspect Ratio", selection: settings.string("aspectRatio", forGame: forGame)) {
                 ForEach(settings.choices("aspectRatio"), id: \.self) { choice in
                     Text(SettingNames.aspectRatio(choice)).tag(choice)
                 }
             }
 
-            Picker("Scaling Filter", selection: settings.string("scalingFilter")) {
+            Picker("Scaling Filter", selection: settings.string("scalingFilter", forGame: forGame)) {
                 Text("Bilinear").tag("Bilinear")
                 Text("Nearest").tag("Nearest")
                 Text("AMD FSR Sharpening").tag("Fsr")
@@ -325,11 +327,11 @@ struct GraphicsQuickSettings: View {
 
             if settings.value("scalingFilter", default: "") == "Fsr" {
                 LabeledContent("Sharpness") {
-                    Slider(value: Binding(get: { Double(settings.value("scalingFilterLevel", default: 80)) }, set: { settings.set("scalingFilterLevel", Int($0)) }), in: 0...100)
+                    Slider(value: Binding(get: { Double(settings.value("scalingFilterLevel", default: 80)) }, set: { settings.set("scalingFilterLevel", Int($0), forGame: forGame) }), in: 0...100)
                 }
             }
 
-            Picker("Anisotropic Filtering", selection: settings.double("maxAnisotropy")) {
+            Picker("Anisotropic Filtering", selection: settings.double("maxAnisotropy", forGame: forGame)) {
                 Text("Auto").tag(-1.0)
                 Text("2x").tag(2.0)
                 Text("4x").tag(4.0)

@@ -192,7 +192,6 @@ distribution/macos/output/
 # Local build output and analysis scratch (several GB each)
 artifacts/
 tools/
-docs/metal-flash-repro/flashrepro
 
 # Project X native interface (SwiftPM build output)
 macos/ProjectXUI/.build/

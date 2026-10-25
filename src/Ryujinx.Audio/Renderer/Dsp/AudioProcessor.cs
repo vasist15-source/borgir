@@ -2,6 +2,7 @@ using Ryujinx.Audio.Integration;
 using Ryujinx.Audio.Renderer.Dsp.Command;
 using Ryujinx.Audio.Renderer.Utils;
 using Ryujinx.Common;
+using Ryujinx.Common.SystemInterop;
 using Ryujinx.Common.Logging;
 using System;
 using System.Threading;
@@ -177,6 +178,8 @@ namespace Ryujinx.Audio.Renderer.Dsp
 
         private void Work()
         {
+            ThreadQos.MarkTimeCritical();
+
             if (_mailbox.ReceiveMessage() != MailboxMessage.Start)
             {
                 throw new InvalidOperationException("Audio Processor Start message was invalid!");

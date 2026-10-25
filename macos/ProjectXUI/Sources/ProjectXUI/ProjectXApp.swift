@@ -128,7 +128,7 @@ struct ProjectXCommands: Commands {
             Divider()
 
             Button(model.session?.status?.docked == false ? "Switch to Docked Mode" : "Switch to Handheld Mode") {
-                model.settings.set("dockedMode", !(model.settings.value("dockedMode", default: true)))
+                model.settings.set("dockedMode", !(model.settings.value("dockedMode", default: true)), forGame: model.session != nil)
             }
             .keyboardShortcut("d", modifiers: [.command, .shift])
             Button("Toggle V-Sync") { model.gameCommand("game.toggleVSync") }

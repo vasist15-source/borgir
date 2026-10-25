@@ -460,13 +460,19 @@ final class SettingsStore {
         ownSettings = reply["ownSettings"] as? [String] ?? []
     }
 
-    func set(_ key: String, _ value: Any) {
+    /// Changes a setting. `forGame` (the in-game overlay and menu) makes it the running game's own setting, where the
+    /// game can have one, instead of changing the global one.
+    func set(_ key: String, _ value: Any, forGame: Bool = false) {
         values[key] = value
 
-        let reply = Core.command("settings.set", ["key": key, "value": value])
+        let reply = Core.command("settings.set", ["key": key, "value": value, "game": forGame])
 
         if let settings = reply["settings"] as? [String: Any] {
             values = settings
+        }
+
+        if let own = reply["ownSettings"] as? [String] {
+            ownSettings = own
         }
 
         if reply["ok"] as? Bool != true {
@@ -478,20 +484,20 @@ final class SettingsStore {
         values[key] as? T ?? fallback
     }
 
-    func bool(_ key: String) -> Binding<Bool> {
-        Binding(get: { self.values[key] as? Bool ?? false }, set: { self.set(key, $0) })
+    func bool(_ key: String, forGame: Bool = false) -> Binding<Bool> {
+        Binding(get: { self.values[key] as? Bool ?? false }, set: { self.set(key, $0, forGame: forGame) })
     }
 
-    func double(_ key: String) -> Binding<Double> {
-        Binding(get: { (self.values[key] as? NSNumber)?.doubleValue ?? 0 }, set: { self.set(key, $0) })
+    func double(_ key: String, forGame: Bool = false) -> Binding<Double> {
+        Binding(get: { (self.values[key] as? NSNumber)?.doubleValue ?? 0 }, set: { self.set(key, $0, forGame: forGame) })
     }
 
     func int(_ key: String) -> Binding<Int> {
         Binding(get: { (self.values[key] as? NSNumber)?.intValue ?? 0 }, set: { self.set(key, $0) })
     }
 
-    func string(_ key: String) -> Binding<String> {
-        Binding(get: { self.values[key] as? String ?? "" }, set: { self.set(key, $0) })
+    func string(_ key: String, forGame: Bool = false) -> Binding<String> {
+        Binding(get: { self.values[key] as? String ?? "" }, set: { self.set(key, $0, forGame: forGame) })
     }
 
     func choices(_ key: String) -> [String] {

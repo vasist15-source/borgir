@@ -201,7 +201,9 @@ namespace Ryujinx.Ava.Native
 
             VSyncMode next = Device.VSyncMode.Next(ConfigurationState.Instance.Graphics.EnableCustomVSyncInterval.Value);
 
-            ConfigurationState.Instance.Graphics.VSyncMode.Value = next;
+            // Toggled in game (the overlay, the menu or the hotkey), so it is this game's V-Sync.
+            NativeGameSettings.Set(ApplicationId.ToString("x16"), "vsyncMode", next.ToString());
+            NativeBridge.Post("settings.changed", new JsonObject());
         }
 
         private void HostThreadMain()
@@ -442,6 +444,7 @@ namespace Ryujinx.Ava.Native
             {
                 try
                 {
+                    ThreadQos.MarkTimeCritical();
                     Device.Gpu.SetGpuThread();
                     Device.Gpu.InitializeShaderCache(_gpuCancellation.Token);
 

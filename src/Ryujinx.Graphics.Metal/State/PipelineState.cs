@@ -531,32 +531,7 @@ namespace Ryujinx.Graphics.Metal
                     PsoRenderQueued++;
                     _psoFrameQueued++;
 
-                    ThreadPool.UnsafeQueueUserWorkItem(_ =>
-                    {
-                        NSError asyncError = new(IntPtr.Zero);
-                        long asyncStart = Stopwatch.GetTimestamp();
-                        MTLRenderPipelineState built = device.NewRenderPipelineState(asyncDescriptor, ref asyncError);
-                        long asyncTicks = Stopwatch.GetTimestamp() - asyncStart;
-
-                        asyncDescriptor.Dispose();
-
-                        Interlocked.Increment(ref PsoRenderCreated);
-                        Interlocked.Add(ref PsoRenderTicks, asyncTicks);
-
-                        if (asyncTicks > PsoRenderMaxTicks)
-                        {
-                            PsoRenderMaxTicks = asyncTicks;
-                        }
-
-                        if (asyncError != IntPtr.Zero)
-                        {
-                            Logger.Error?.PrintMsg(LogClass.Gpu, $"Failed to create Render Pipeline State: {StringHelper.String(asyncError.LocalizedDescription)}");
-                            built = default;
-                        }
-
-                        PipelineUid builtKey = key;
-                        program.EndGraphicsPipelineBuild(ref builtKey, built);
-                    }, null);
+                    QueueRenderPipelineBuild(device, program, asyncDescriptor, key);
 
                     if (_asyncPsoWaitBudgetTicks > 0 && _psoWaitSpentTicksThisFrame < _asyncPsoWaitBudgetTicks)
                     {
@@ -602,6 +577,38 @@ namespace Ryujinx.Graphics.Metal
             }
 
             return pipelineState;
+        }
+
+        // Its own method so the closure exists only when a build is queued: capturing CreateRenderPipeline's
+        // parameters allocated one on every call, cache hits included (about 40 MB/s in Breath of the Wild).
+        private static void QueueRenderPipelineBuild(MTLDevice device, Program program, MTLRenderPipelineDescriptor asyncDescriptor, PipelineUid key)
+        {
+            ThreadPool.UnsafeQueueUserWorkItem(_ =>
+            {
+                NSError asyncError = new(IntPtr.Zero);
+                long asyncStart = Stopwatch.GetTimestamp();
+                MTLRenderPipelineState built = device.NewRenderPipelineState(asyncDescriptor, ref asyncError);
+                long asyncTicks = Stopwatch.GetTimestamp() - asyncStart;
+
+                asyncDescriptor.Dispose();
+
+                Interlocked.Increment(ref PsoRenderCreated);
+                Interlocked.Add(ref PsoRenderTicks, asyncTicks);
+
+                if (asyncTicks > PsoRenderMaxTicks)
+                {
+                    PsoRenderMaxTicks = asyncTicks;
+                }
+
+                if (asyncError != IntPtr.Zero)
+                {
+                    Logger.Error?.PrintMsg(LogClass.Gpu, $"Failed to create Render Pipeline State: {StringHelper.String(asyncError.LocalizedDescription)}");
+                    built = default;
+                }
+
+                PipelineUid builtKey = key;
+                program.EndGraphicsPipelineBuild(ref builtKey, built);
+            }, null);
         }
 
         public static MTLComputePipelineDescriptor CreateComputeDescriptor(Program program)
