@@ -1,0 +1,246 @@
+name: Stable CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      is_bugfix_release:
+        description: "Bug fix release: If checked, this will increment the third number for only Stable, and leave the Major version alone for both Stable and Canary."
+        required: true
+        type: boolean
+
+concurrency: release
+
+env:
+  POWERSHELL_TELEMETRY_OPTOUT: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  RYUJINX_TARGET_RELEASE_CHANNEL_NAME: "release"
+  RELEASE: 1
+
+jobs:
+  release:
+    name: Release for ${{ matrix.platform.name }}
+    runs-on: docker
+    container:
+      image: ${{ matrix.platform.os }}
+    strategy:
+      matrix:
+        platform:
+          - { name: win-x64,     os: ghcr.io/catthehacker/ubuntu:act-latest, zip_os_name: win_x64     }
+          - { name: win-arm64,   os: ghcr.io/catthehacker/ubuntu:act-latest, zip_os_name: win_arm64   }
+          - { name: linux-x64,   os: ghcr.io/catthehacker/ubuntu:act-latest, zip_os_name: linux_x64   }
+          - { name: linux-arm64, os: ghcr.io/catthehacker/ubuntu:act-latest, zip_os_name: linux_arm64 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Overwrite csc problem matcher
+        run: echo "::add-matcher::.github/csc.json"
+        
+      - name: Install 7zip
+        run: |
+          sudo apt install -y 7zip
+          
+      - name: Install GLI
+        uses: actions/setup-gli@v1
+        with:
+          token: ${{ secrets.SETUP_GLI_TOKEN }}
+
+      - name: Get version info
+        id: version_info
+        run: |
+          if [ '${{ inputs.is_bugfix_release }}' == 'false' ]; then
+            echo "build_version=$(gli get-next-version -m -c Stable -R)" >> $FORGEJO_OUTPUT
+          else
+            echo "build_version=$(gli get-next-version -c Stable -R)" >> $FORGEJO_OUTPUT
+          fi
+          echo "prev_build_version=$(gli get-current-version -c Stable -R)" >> $FORGEJO_OUTPUT
+          echo "git_short_hash=$(git rev-parse --short "${{ forgejo.sha }}")" >> $FORGEJO_OUTPUT
+        shell: bash
+
+      - name: Configure for release
+        run: |
+          sed -r --in-place 's/\%\%RYUJINX_BUILD_VERSION\%\%/${{ steps.version_info.outputs.build_version }}/g;' src/Ryujinx.Common/ReleaseInformation.cs
+          sed -r --in-place 's/\%\%RYUJINX_BUILD_GIT_HASH\%\%/${{ steps.version_info.outputs.git_short_hash }}/g;' src/Ryujinx.Common/ReleaseInformation.cs
+          sed -r --in-place 's/\%\%RYUJINX_TARGET_RELEASE_CHANNEL_NAME\%\%/${{ env.RYUJINX_TARGET_RELEASE_CHANNEL_NAME }}/g;' src/Ryujinx.Common/ReleaseInformation.cs
+          sed -r --in-place 's/\%\%RYUJINX_CONFIG_FILE_NAME\%\%/Config\.json/g;' src/Ryujinx.Common/ReleaseInformation.cs
+        shell: bash
+
+      - name: Create output dir
+        run: "mkdir release_output"
+
+      - name: Publish
+        run: |
+          dotnet publish -c Release -r "${{ matrix.platform.name }}" -o ./publish -p:Version="${{ steps.version_info.outputs.build_version }}" -p:SourceRevisionId="${{ steps.version_info.outputs.git_short_hash }}" -p:DebugType=embedded src/Ryujinx --self-contained
+
+      - name: Packing Windows builds
+        if: contains(matrix.platform.name, 'win')
+        run: |
+          pushd publish
+          rm libarmeilleure-jitsupport.dylib
+          7z a ../release_output/ryujinx-${{ steps.version_info.outputs.build_version }}-${{ matrix.platform.zip_os_name }}.zip ../publish
+          7z a ../release_output/ryujinx-${{ steps.version_info.outputs.build_version }}-${{ matrix.platform.zip_os_name }}.7z ../publish
+          popd
+        shell: bash
+
+      - name: Packing Linux builds
+        if: contains(matrix.platform.name, 'linux')
+        run: |
+          pushd publish
+          rm libarmeilleure-jitsupport.dylib
+          chmod +x Ryujinx.sh Ryujinx
+          tar -czvf ../release_output/ryujinx-${{ steps.version_info.outputs.build_version }}-${{ matrix.platform.zip_os_name }}.tar.gz ../publish
+          tar -cJvf ../release_output/ryujinx-${{ steps.version_info.outputs.build_version }}-${{ matrix.platform.zip_os_name }}.tar.xz ../publish
+          popd
+        shell: bash
+
+      - name: Build AppImage (Linux)
+        if: contains(matrix.platform.name, 'linux')
+        run: |
+          BUILD_VERSION="${{ steps.version_info.outputs.build_version }}"
+          PLATFORM_NAME="${{ matrix.platform.name }}"
+
+          sudo apt install -y zsync desktop-file-utils appstream
+
+          mkdir -p tools
+          export PATH="$PATH:$(readlink -f tools)"
+
+          # Setup appimagetool
+          wget -q -O tools/appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x tools/appimagetool
+          chmod +x distribution/linux/appimage/build-appimage.sh
+
+          # Explicitly set $ARCH for appimagetool ($ARCH_NAME is for the file name)
+          if [ "$PLATFORM_NAME" = "linux-x64" ]; then
+            ARCH_NAME=x64
+            export ARCH=x86_64
+          elif [ "$PLATFORM_NAME" = "linux-arm64" ]; then
+            ARCH_NAME=arm64
+            export ARCH=aarch64
+          else
+            echo "Unexpected PLATFORM_NAME "$PLATFORM_NAME""
+            exit 1
+          fi
+
+          BUILDDIR=publish OUTDIR=publish_appimage distribution/linux/appimage/build-appimage.sh
+
+          pushd publish_appimage
+          mv Ryujinx.AppImage ../release_output/ryujinx-$BUILD_VERSION-$ARCH_NAME.AppImage
+          popd
+        shell: bash
+
+      - name: Create release
+        uses: actions/create-release@v1
+        with:
+          name: "${{ steps.version_info.outputs.build_version }}"
+          repository: "projects/Ryubing"
+          token: ${{ secrets.RELEASER_TOKEN  }}
+          tag_name: ${{ steps.version_info.outputs.build_version }}
+          files: |-
+            release_output/**
+
+  macos_release:
+    name: Release MacOS universal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Setup LLVM 17
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          
+      - name: Install GLI
+        uses: actions/setup-gli@v1
+        with:
+          token: ${{ secrets.SETUP_GLI_TOKEN }}
+
+      - name: Install rcodesign
+        run: |
+          gli ghr -R indygreg/apple-platform-rs -p apple-codesign-*-x86_64-unknown-linux-musl.tar.gz -O apple-codesign.tar.gz
+          tar -xzvf apple-codesign.tar.gz --wildcards '*/rcodesign' --strip-components=1
+          rm apple-codesign.tar.gz
+          mv rcodesign /usr/bin/rcodesign
+
+      - name: Get version info
+        id: version_info
+        run: |
+          if [ '${{ inputs.is_bugfix_release }}' == 'false' ]; then
+            echo "build_version=$(gli get-next-version -m -c Stable -R)" >> $FORGEJO_OUTPUT
+          else
+            echo "build_version=$(gli get-next-version -c Stable -R)" >> $FORGEJO_OUTPUT
+          fi
+          echo "prev_build_version=$(gli get-current-version -c Stable -R)" >> $FORGEJO_OUTPUT
+          echo "git_short_hash=$(git rev-parse --short "${{ forgejo.sha }}")" >> $FORGEJO_OUTPUT
+        shell: bash
+
+      - name: Configure for release
+        run: |
+          sed -r --in-place 's/\%\%RYUJINX_BUILD_VERSION\%\%/${{ steps.version_info.outputs.build_version }}/g;' src/Ryujinx.Common/ReleaseInformation.cs
+          sed -r --in-place 's/\%\%RYUJINX_BUILD_GIT_HASH\%\%/${{ steps.version_info.outputs.git_short_hash }}/g;' src/Ryujinx.Common/ReleaseInformation.cs
+          sed -r --in-place 's/\%\%RYUJINX_TARGET_RELEASE_CHANNEL_NAME\%\%/${{ env.RYUJINX_TARGET_RELEASE_CHANNEL_NAME }}/g;' src/Ryujinx.Common/ReleaseInformation.cs
+          sed -r --in-place 's/\%\%RYUJINX_CONFIG_FILE_NAME\%\%/Config\.json/g;' src/Ryujinx.Common/ReleaseInformation.cs
+        shell: bash
+
+      - name: Publish macOS Ryujinx
+        run: |
+          bash distribution/macos/create_macos_build_ava.sh . publish_tmp_ava publish ./distribution/macos/entitlements.xml "${{ steps.version_info.outputs.build_version }}" "${{ steps.version_info.outputs.git_short_hash }}" Release 0
+
+      - name: Create release
+        uses: actions/create-release@v1
+        with:
+          name: "${{ steps.version_info.outputs.build_version }}"
+          repository: "projects/Ryubing"
+          token: ${{ secrets.RELEASER_TOKEN  }}
+          tag_name: ${{ steps.version_info.outputs.build_version }}
+          files: |-
+            publish_ava/ryujinx-canary-${{ steps.version_info.outputs.build_version }}-macos_universal.app.tar.gz
+
+  post_ci:
+    name: Post-CI Steps
+    runs-on: ubuntu-latest
+    needs:
+      - macos_release
+      - release
+    steps:
+      - uses: actions/checkout@v7
+        
+      - name: Install GLI
+        uses: actions/setup-gli@v1
+        with:
+          token: ${{ secrets.SETUP_GLI_TOKEN }}
+
+      - name: Get version info
+        id: version_info
+        run: |
+          if [ '${{ inputs.is_bugfix_release }}' == 'false' ]; then
+            echo "build_version=$(gli get-next-version -m -c Stable -R)" >> $FORGEJO_OUTPUT
+          else
+            echo "build_version=$(gli get-next-version -c Stable -R)" >> $FORGEJO_OUTPUT
+          fi
+          echo "prev_build_version=$(gli get-current-version -c Stable -R)" >> $FORGEJO_OUTPUT
+          echo "git_short_hash=$(git rev-parse --short "${{ forgejo.sha }}")" >> $FORGEJO_OUTPUT
+        shell: bash
+
+      - name: Send notification webhook
+        run: |
+          gli send-update-message -T ${{ secrets.RELEASER_TOKEN }} -P projects/Ryubing -t ${{ steps.version_info.outputs.build_version }} -c 32cd32 -w ${{ secrets.STABLE_DISCORD_WEBHOOK }} -i https://avatars.githubusercontent.com/u/192939710?s=200&v=4
+
+      - name: Notify update server of new builds
+        run: |
+          gli refresh-version-cache -T ${{ secrets.UPDATE_SERVER_ADMIN_TOKEN }} -c Stable
+
+      - name: Advance to the next version
+        run: |
+          if [ '${{ inputs.is_bugfix_release }}' == 'false' ]; then
+            gli advance-version -T ${{ secrets.UPDATE_SERVER_ADMIN_TOKEN }}
+          else
+            gli increment-version -T ${{ secrets.UPDATE_SERVER_ADMIN_TOKEN }} -c Stable
+          fi

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "renovate/config"
+  ],
+  "enabledManagers": ["nuget", "github-actions"],
+  "packageRules": [
+    {
+      // require approval for *all* NuGet package updates, not just major versions.
+      "matchDepTypes": "nuget",
+      "dependencyDashboardApproval": true
+    },
+    {
+      // Ignore Gommon for automatic updates. I make breaking changes on minor updates not infrequently.
+      "matchDepNames": "Gommon",
+      "matchDepTypes": "nuget",
+      "enabled": false
+    },
+    {
+      "description": "group Silk.NET packages",
+      "extends": ["renovate/config//groups/silkdotnet.json"],
+      "groupName": "Silk.NET"
+    },
+    {
+      "description": "group OpenTK packages",
+      "extends": ["renovate/config//groups/opentk.json"],
+      "groupName": "OpenTK"
+    },
+    {
+      "description": "group Svg.Controls packages",
+      "extends": ["renovate/config//groups/svgcontrols.json"],
+      "groupName": "Svg.Controls"
+    }
+  ]
+}

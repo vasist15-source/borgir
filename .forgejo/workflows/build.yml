@@ -1,0 +1,204 @@
+name: Build PR
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - '**'
+      - '!.forgejo/**'
+      - '!*.yml'
+      - '!*.config'
+      - '!*.md'
+      - '.forgejo/workflows/*.yml'
+
+env:
+  POWERSHELL_TELEMETRY_OPTOUT: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  RELEASE: 0
+
+jobs:
+  build:
+    name: ${{ matrix.platform.name }} (${{ matrix.configuration }})
+    runs-on: docker
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        configuration: [Release]
+        platform:
+          - { name: win-x64,     zip_os_name: win_x64     }
+          - { name: win-arm64,   zip_os_name: win_arm64   }
+          - { name: linux-x64,   zip_os_name: linux_x64   }
+          - { name: linux-arm64, zip_os_name: linux_arm64 }
+          #- { name: osx-x64,     zip_os_name: osx_x64     }
+
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Install GLI
+        uses: actions/setup-gli@v1
+        with:
+          token: ${{ secrets.SETUP_GLI_TOKEN }}
+
+      - name: Install 7zip
+        run: |
+          sudo apt update && sudo apt install -y 7zip
+
+      - name: Overwrite csc problem matcher
+        run: echo "::add-matcher::.forgejo/csc.json"
+
+      - name: Get version info
+        id: version_info
+        run: |
+          echo "result=$(gli get-next-version -c Canary -R)" >> $FORGEJO_OUTPUT
+          echo "git_short_hash=$(git rev-parse --short "${{ forgejo.sha }}")" >> $FORGEJO_OUTPUT
+        shell: bash
+
+      - name: Change config filename
+        run: sed -r --in-place 's/\%\%RYUJINX_CONFIG_FILE_NAME\%\%/PRConfig\.json/g;' src/Ryujinx.Common/ReleaseInformation.cs
+        shell: bash
+        if: forgejo.event_name == 'pull_request'
+
+      - name: 'Cache: ~/.nuget/packages'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.nuget/packages
+          key: ${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj', '**/Directory.Packages.props') }}
+
+      - name: Build
+        run: dotnet build -c "${{ matrix.configuration }}" -p:Version="${{ steps.version_info.outputs.result }}" -p:SourceRevisionId="${{ steps.version_info.outputs.git_short_hash }}" -p:ExtraDefineConstants=DISABLE_UPDATER
+
+      - name: Test
+        uses: actions/unstable-commands@v1
+        with:
+          commands: dotnet test --no-build -c "${{ matrix.configuration }}"
+          timeout-minutes: 10
+          retry-codes: 139
+        if: matrix.platform.name != 'linux-arm64'
+
+      - name: Publish Ryujinx
+        run: dotnet publish -c "${{ matrix.configuration }}" -r "${{ matrix.platform.name }}" -o ./publish -p:Version="${{ steps.version_info.outputs.result }}" -p:DebugType=embedded -p:SourceRevisionId="${{ steps.version_info.outputs.git_short_hash }}" -p:ExtraDefineConstants=DISABLE_UPDATER src/Ryujinx --self-contained 
+        if: forgejo.event_name == 'pull_request'
+
+      - name: Packing Windows builds
+        if: contains(matrix.platform.name, 'win')
+        run: |
+          7z a artifact/ryujinx-${{ matrix.configuration }}-${{ steps.version_info.outputs.result }}+${{ steps.version_info.outputs.git_short_hash }}-${{ matrix.platform.zip_os_name }}.7z publish
+        shell: bash
+
+      - name: Upload Ryujinx Windows artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ryujinx-${{ matrix.configuration }}-${{ steps.version_info.outputs.result }}+${{ steps.version_info.outputs.git_short_hash }}-${{ matrix.platform.zip_os_name }}
+          path: artifact
+        if: forgejo.event_name == 'pull_request' && contains(matrix.platform.name, 'win')
+
+      - name: Build AppImage
+        if: forgejo.event_name == 'pull_request' && contains(matrix.platform.name, 'linux')
+        run: |
+          chmod +x ./publish/Ryujinx ./publish/Ryujinx.sh
+
+          PLATFORM_NAME="${{ matrix.platform.name }}"
+
+          sudo apt update && sudo apt install -y zsync desktop-file-utils appstream libfuse2t64
+
+          mkdir -p tools
+          export PATH="$PATH:$(readlink -f tools)"
+
+          # Setup appimagetool
+          wget -q -O tools/appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x tools/appimagetool
+          chmod +x distribution/linux/appimage/build-appimage.sh
+
+          # Explicitly set $ARCH for appimagetool ($ARCH_NAME is for the file name)
+          if [ "$PLATFORM_NAME" = "linux-x64" ]; then
+            ARCH_NAME=x64
+            export ARCH=x86_64
+          elif [ "$PLATFORM_NAME" = "linux-arm64" ]; then
+            ARCH_NAME=arm64
+            export ARCH=aarch64
+          else
+            echo "Unexpected PLATFORM_NAME "$PLATFORM_NAME""
+            exit 1
+          fi
+
+          BUILDDIR=publish OUTDIR=publish_appimage distribution/linux/appimage/build-appimage.sh
+        shell: bash
+
+      - name: Upload Ryujinx AppImage artifact
+        uses: actions/upload-artifact@v5
+        if: forgejo.event_name == 'pull_request' && contains(matrix.platform.name, 'linux')
+        with:
+          name: ryujinx-${{ matrix.configuration }}-${{ steps.version_info.outputs.result }}+${{ steps.version_info.outputs.git_short_hash }}-${{ matrix.platform.zip_os_name }}-AppImage
+          path: publish_appimage
+
+  build_macos:
+    name: macOS Universal (${{ matrix.configuration }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        configuration: [ Release ]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Setup LLVM 17
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+
+      - name: Install GLI
+        uses: actions/setup-gli@v1
+        with:
+          token: ${{ secrets.SETUP_GLI_TOKEN }}
+
+      - name: Install rcodesign
+        run: |
+          gli ghr -R indygreg/apple-platform-rs -p apple-codesign-*-x86_64-unknown-linux-musl.tar.gz -O apple-codesign.tar.gz
+          tar -xzvf apple-codesign.tar.gz --wildcards '*/rcodesign' --strip-components=1
+          rm apple-codesign.tar.gz
+          sudo mv rcodesign /usr/bin/rcodesign
+
+      - name: Get version info
+        id: version_info
+        run: |
+          echo "result=$(gli get-next-version -c Stable -R)" >> $FORGEJO_OUTPUT
+          echo "git_short_hash=$(git rev-parse --short "${{ forgejo.sha }}")" >> $FORGEJO_OUTPUT
+        shell: bash
+
+      - name: Change config filename
+        run: sed -r --in-place 's/\%\%RYUJINX_CONFIG_FILE_NAME\%\%/PRConfig\.json/g;' src/Ryujinx.Common/ReleaseInformation.cs
+        shell: bash
+        if: forgejo.event_name == 'pull_request'
+
+      - name: 'Cache: ~/.nuget/packages'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.nuget/packages
+          key: ${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj', '**/Directory.Packages.props') }}
+
+      - name: Publish macOS Ryujinx
+        run: |
+          bash distribution/macos/create_macos_pr_build_ava.sh . publish_tmp publish ./distribution/macos/entitlements.xml "${{ steps.version_info.outputs.result }}" "${{ steps.version_info.outputs.git_short_hash }}" "${{ matrix.configuration }}" "-p:ExtraDefineConstants=DISABLE_UPDATER"
+        shell: bash
+
+      - name: Upload Ryujinx artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ryujinx-${{ matrix.configuration }}-${{ steps.version_info.outputs.result }}+${{ steps.version_info.outputs.git_short_hash }}-macos_universal
+          path: "publish/*.tar.gz"
+        if: forgejo.event_name == 'pull_request'

@@ -1,0 +1,98 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RuntimeIdentifiers>win-x64;osx-x64;linux-x64;win-arm64;osx-arm64;linux-arm64;</RuntimeIdentifiers>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>1.0.0-dirty</Version>
+    <DefineConstants Condition=" '$(ExtraDefineConstants)' != '' ">$(DefineConstants);$(ExtraDefineConstants)</DefineConstants>
+    <SigningCertificate Condition=" '$(SigningCertificate)' == '' ">-</SigningCertificate>
+    <ApplicationIcon>Ryujinx.ico</ApplicationIcon>
+    <TieredPGO>true</TieredPGO>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <DefaultItemExcludes>$(DefaultItemExcludes);._*</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <Exec Command="codesign --entitlements '$(ProjectDir)..\..\distribution\macos\entitlements.xml' -f -s &quot;$(SigningCertificate)&quot; '$(TargetDir)$(TargetName)'" />
+  </Target>
+
+  <Target Name="SignMacOSPublishedExecutable" AfterTargets="Publish" Condition="$([MSBuild]::IsOSPlatform('OSX')) And Exists('$(PublishDir)$(TargetName)')">
+    <Exec Command="codesign --entitlements '$(ProjectDir)..\..\distribution\macos\entitlements.xml' -f -s &quot;$(SigningCertificate)&quot; '$(PublishDir)$(TargetName)'" />
+  </Target>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <PublishSingleFile>true</PublishSingleFile>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+  </PropertyGroup>
+
+  <!-- Trimmed builds turn off reflection-based System.Text.Json by default; keep it on as the published builds always had it. -->
+  <PropertyGroup>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Condition="'$(RuntimeIdentifier)' != 'linux-x64' AND '$(RuntimeIdentifier)' != 'linux-arm64' AND '$(RuntimeIdentifier)' != 'osx-x64' AND '$(RuntimeIdentifier)' != 'osx-arm64'" />
+    <PackageReference Include="SkiaSharp.NativeAssets.macOS" Condition="'$(RuntimeIdentifier)' != 'linux-x64' AND '$(RuntimeIdentifier)' != 'linux-arm64' AND '$(RuntimeIdentifier)' != 'win-x64' AND '$(RuntimeIdentifier)' != 'win-arm64'" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Condition="'$(RuntimeIdentifier)' != 'win-x64' AND '$(RuntimeIdentifier)' != 'win-arm64' AND '$(RuntimeIdentifier)' != 'osx-x64' AND '$(RuntimeIdentifier)' != 'osx-arm64'" />
+    <PackageReference Include="DynamicData" />
+    <PackageReference Include="CommandLineParser" />
+    <PackageReference Include="DiscordRichPresence" />
+    <PackageReference Include="Ryujinx.Audio.OpenAL" Condition="'$(RuntimeIdentifier)' != 'linux-x64' AND '$(RuntimeIdentifier)' != 'linux-arm64' AND '$(RuntimeIdentifier)' != 'osx-x64' AND '$(RuntimeIdentifier)' != 'osx-arm64'" />
+    <PackageReference Include="Ryujinx.Graphics.Nvdec.Dependencies.AllArch" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\Ryujinx.Graphics.RenderDocApi\Ryujinx.Graphics.RenderDocApi.csproj" />
+    <ProjectReference Include="..\Ryujinx.Graphics.Metal\Ryujinx.Graphics.Metal.csproj" />
+    <ProjectReference Include="..\Ryujinx.Input\Ryujinx.Input.csproj" />
+    <ProjectReference Include="..\Ryujinx.Input.SDL3\Ryujinx.Input.SDL3.csproj" />
+    <ProjectReference Include="..\Ryujinx.Audio.Backends.Apple\Ryujinx.Audio.Backends.Apple.csproj" />
+    <ProjectReference Include="..\Ryujinx.Audio.Backends.SDL3\Ryujinx.Audio.Backends.SDL3.csproj" />
+    <ProjectReference Include="..\Ryujinx.Audio.Backends.OpenAL\Ryujinx.Audio.Backends.OpenAL.csproj" />
+    <ProjectReference Include="..\Ryujinx.Audio.Backends.SoundIo\Ryujinx.Audio.Backends.SoundIo.csproj" />
+    <ProjectReference Include="..\Ryujinx.Common\Ryujinx.Common.csproj" />
+    <ProjectReference Include="..\Ryujinx.HLE\Ryujinx.HLE.csproj" />
+    <ProjectReference Include="..\ARMeilleure\ARMeilleure.csproj" />
+    <ProjectReference Include="..\Ryujinx.Graphics.Gpu\Ryujinx.Graphics.Gpu.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\distribution\windows\alsoft.ini" Condition="'$(RuntimeIdentifier)' != 'linux-x64' AND '$(RuntimeIdentifier)' != 'linux-arm64' AND '$(RuntimeIdentifier)' != 'osx-x64' AND '$(RuntimeIdentifier)' != 'osx-arm64'">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <TargetPath>alsoft.ini</TargetPath>
+    </Content>
+    <Content Include="..\..\distribution\legal\THIRDPARTY.md">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <TargetPath>THIRDPARTY.md</TargetPath>
+      <Visible>False</Visible>
+    </Content>
+    <Content Include="..\..\LICENSE.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <TargetPath>LICENSE.txt</TargetPath>
+      <Visible>False</Visible>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64' OR '$(RuntimeIdentifier)' == 'linux-arm64' OR ('$(RuntimeIdentifier)' == '' AND $([MSBuild]::IsOSPlatform('Linux')))">
+    <Content Include="..\..\distribution\linux\Ryujinx.sh">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\distribution\linux\mime\Ryujinx.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <TargetPath>mime\Ryujinx.xml</TargetPath>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\UIImages\Icon_NCA.png" />
+    <EmbeddedResource Include="Assets\UIImages\Icon_NRO.png" />
+    <EmbeddedResource Include="Assets\UIImages\Icon_NSO.png" />
+    <EmbeddedResource Include="Assets\UIImages\Icon_NSP.png" />
+    <EmbeddedResource Include="Assets\UIImages\Icon_XCI.png" />
+    <EmbeddedResource Include="Assets\UIImages\Logo_Ryujinx.png" />
+    <EmbeddedResource Include="Assets\PlayReports\*.json" />
+    <EmbeddedResource Include="Assets\Splashes.json" />
+  </ItemGroup>
+</Project>

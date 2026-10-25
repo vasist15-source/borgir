@@ -1,0 +1,51 @@
+audio:
+- changed-files:
+  - any-glob-to-any-file: 'src/Ryujinx.Audio*/**'
+
+cpu:
+- changed-files:
+  - any-glob-to-any-file: ['src/ARMeilleure/**', 'src/Ryujinx.Cpu/**', 'src/Ryujinx.Memory/**']
+
+gpu:
+- changed-files:
+  - any-glob-to-any-file: ['src/Ryujinx.Graphics.*/**', 'src/Spv.Generator/**', 'src/Ryujinx.ShaderTools/**']
+
+input:
+- changed-files:
+  - any-glob-to-any-file: ['src/Ryujinx.Input*/**', 'src/Ryujinx/UI/Views/Input/**']
+
+'graphics-backend:opengl':
+- changed-files:
+  - any-glob-to-any-file: 'src/Ryujinx.Graphics.OpenGL/**'
+
+'graphics-backend:vulkan':
+- changed-files:
+  - any-glob-to-any-file: ['src/Ryujinx.Graphics.Vulkan/**', 'src/Spv.Generator/**']
+
+gui:
+- changed-files:
+  - any-glob-to-any-file: ['src/Ryujinx/**', 'src/Ryujinx.UI.LocaleGenerator/**']
+
+'horizon/hle':
+- changed-files:
+  - any-glob-to-any-file: ['src/Ryujinx.HLE/**', 'src/Ryujinx.HLE.Generators/**', 'src/Ryujinx.Horizon/**']
+
+i18n:
+- changed-files:
+  - any-glob-to-any-file: ['assets/**/*.json', 'src/Ryujinx.UI.LocaleGenerator/**']
+
+kernel:
+- changed-files:
+  - any-glob-to-any-file: 'src/Ryujinx.HLE/HOS/Kernel/**'
+
+infra:
+- changed-files:
+  - any-glob-to-any-file: ['.forgejo/**', 'distribution/**', 'Directory.Packages.props', 'src/Ryujinx.BuildValidationTasks/**']
+
+documentation:
+- changed-files:
+  - any-glob-to-any-file: 'docs/**'
+
+ldn:
+- changed-files:
+  - any-glob-to-any-file: ['src/Ryujinx.HLE/HOS/Services/Ldn/**', 'src/Ryujinx/UI/Windows/LdnGamesListWindow.*', 'src/Ryujinx/UI/ViewModels/LdnGamesListViewModel.cs']

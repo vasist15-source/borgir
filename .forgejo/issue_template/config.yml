@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ryubing Issue Tracker
+    url: https://github.com/Ryubing/Issues/issues/
+    about: "Please use this GitHub repository instead of creating issues on this Forgejo repository. Blank issues should only be used by maintainers and authorized bots. Issues made on this repository can and will be deleted."
