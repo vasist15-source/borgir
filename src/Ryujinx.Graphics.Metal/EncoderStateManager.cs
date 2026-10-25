@@ -821,6 +821,11 @@ namespace Ryujinx.Graphics.Metal
                 visibilityOffset = _pipeline.PrepareCounterRenderPass(renderPassDescriptor);
             }
 
+            if (PassTimer.Enabled)
+            {
+                PassTimer.AttachRender(_pipeline.CommandBuffer, renderPassDescriptor);
+            }
+
             // Initialise Encoder
             MTLRenderCommandEncoder renderCommandEncoder = _pipeline.CommandBuffer.RenderCommandEncoder(renderPassDescriptor);
             if (UploadCorrelator.Enabled)
@@ -942,6 +947,12 @@ namespace Ryujinx.Graphics.Metal
         public readonly MTLComputeCommandEncoder CreateComputeCommandEncoder()
         {
             using MTLComputePassDescriptor descriptor = new();
+
+            if (PassTimer.Enabled)
+            {
+                PassTimer.AttachCompute(_pipeline.CommandBuffer, descriptor);
+            }
+
             MTLComputeCommandEncoder computeCommandEncoder = _pipeline.CommandBuffer.ComputeCommandEncoder(descriptor);
 
             return computeCommandEncoder;

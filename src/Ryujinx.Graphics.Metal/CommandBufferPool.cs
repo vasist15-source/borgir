@@ -403,6 +403,11 @@ namespace Ryujinx.Graphics.Metal
                     GpuTimeline.Note(entry.CommandBuffer.GetGpuStartTime(), entry.CommandBuffer.GetGpuEndTime());
                 }
 
+                if (PassTimer.Enabled)
+                {
+                    PassTimer.Complete(entry.CommandBuffer);
+                }
+
                 if (GapAnatomy.Enabled && (uint)cbIndex < (uint)_gapCommitTicks.Length)
                 {
                     GapAnatomy.NoteBuffer(_gapEncodeTicks[cbIndex], _gapCommitTicks[cbIndex],

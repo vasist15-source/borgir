@@ -309,6 +309,12 @@ class CommandBufferEncoder
         _endingFor = EncoderType.None;
 
         using MTLBlitPassDescriptor descriptor = new();
+
+        if (PassTimer.Enabled)
+        {
+            PassTimer.AttachBlit(_commandBuffer, descriptor);
+        }
+
         MTLBlitCommandEncoder blitCommandEncoder = _commandBuffer.BlitCommandEncoder(descriptor);
 
         ObjcOwnership.Retain(blitCommandEncoder.NativePtr);

@@ -1115,6 +1115,11 @@ namespace Ryujinx.Graphics.Metal
             if (CurrentEncoderType == EncoderType.Render) { UploadCorrelator.Seq(reason == PassEndReason.RenderTargets ? "P-RT" : reason == PassEndReason.FragmentDependency ? "P-FD" : reason == PassEndReason.Flush ? "P-F" : "P-" + reason); }
             _pendingPassEndReason = reason;
 
+            if (PassTimer.Enabled && CurrentEncoderType != EncoderType.None)
+            {
+                PassTimer.NoteEnd(CommandBuffer, reason, CurrentEncoderType == EncoderType.Render ? (int)(DrawCount - _drawCountAtPassStart) : 0);
+            }
+
             Cbs.Encoders.EndCurrentPass();
 
             _pendingPassEndReason = PassEndReason.Unspecified;
@@ -1776,6 +1781,11 @@ namespace Ryujinx.Graphics.Metal
                         $"{coalescedSyncSignalCount} coalesced signals, " +
                         $"{autoFlushDrawCount} draw auto-flushes, {autoFlushAttachmentCount} attachment auto-flushes " +
                         $"(fast flush: {_renderer.AutoFlush.FastFlushMode}).{sourceText}{createText}{durationText}{threadText}{passText}{gpuText}{splitClassText}{reasonText}{revisitText}{gateText}{blitText}{storeText}{psoText}{configText}");
+
+                    if (PassTimer.Enabled && PassTimer.TakeReport(SyncStatsLogFrameInterval) is string passTimes)
+                    {
+                        Logger.Info?.PrintMsg(LogClass.Gpu, passTimes);
+                    }
                 }
             }
 
