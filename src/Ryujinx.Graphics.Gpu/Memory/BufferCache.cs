@@ -148,16 +148,48 @@ namespace Ryujinx.Graphics.Gpu.Memory
             {
                 if (lookup.Generation != _generation || lookup.Address != address || lookup.Size != size || !LookupCacheEnabled)
                 {
-                    CreateBuffer(address, size, stage);
-
-                    if (size != 0)
+                    if (LookupCacheEnabled && lookup.Generation == _generation && HoldsAligned(lookup.Buffer, address, size))
                     {
-                        FindBuffer(address, size, ref lookup);
+                        // The slot moved within the buffer it already had, as a game streaming its constants through
+                        // one large buffer does draw after draw: there is nothing to create or search for.
+                        lookup.Address = address;
+                        lookup.Size = size;
+                    }
+                    else
+                    {
+                        CreateBuffer(address, size, stage);
+
+                        if (size != 0)
+                        {
+                            FindBuffer(address, size, ref lookup);
+                        }
                     }
                 }
             }
 
             return new MultiRange(address, size);
+        }
+
+        /// <summary>
+        /// Whether <paramref name="buffer"/> holds the range as <see cref="CreateBuffer(ulong, ulong, BufferStage)"/>
+        /// aligns it, in which case that would find the buffer and create nothing.
+        /// </summary>
+        private static bool HoldsAligned(Buffer buffer, ulong address, ulong size)
+        {
+            if (buffer == null)
+            {
+                return false;
+            }
+
+            ulong alignedAddress = address & ~BufferAlignmentMask;
+            ulong alignedEndAddress = (address + size + BufferAlignmentMask) & ~BufferAlignmentMask;
+
+            if (alignedEndAddress == alignedAddress)
+            {
+                alignedEndAddress += BufferAlignmentSize;
+            }
+
+            return buffer.Address <= alignedAddress && buffer.EndAddress >= alignedEndAddress;
         }
 
         /// <summary>
