@@ -12,6 +12,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
@@ -30,7 +31,16 @@ namespace Ryujinx.Graphics.Metal
         public bool IsFetchVariant { get; init; }
         public static long FetchVariantsCreated;
         public static long FetchVariantsRejected;
-        private readonly ShaderSource[] _shaders;
+        // The MSL of every stage, as text until the program has compiled, then Brotli-compressed
+        // (_packedSources, see CompressSources) and unpacked again on the rare later use: a
+        // framebuffer-fetch variant, the shader cache saving a new program, diagnostics. Breath
+        // of the Wild's 1,800 programs hold 139 MB of MSL, which as .NET strings kept about 280 MB
+        // of the managed heap alive for the whole session. RYUJINX_METAL_KEEP_MSL=1 keeps the text.
+        private static readonly bool _keepSources = Environment.GetEnvironmentVariable("RYUJINX_METAL_KEEP_MSL") == "1";
+
+        private ShaderSource[] _shaders;
+        private byte[] _packedSources;
+        private int _packedLength;
         private readonly GCHandle[] _handles;
         private readonly ManualResetEventSlim _compilationEvent = new(false);
         private long _compileStart;
@@ -98,7 +108,7 @@ namespace Ryujinx.Graphics.Metal
         {
             get
             {
-                _isTexelFetchComposite ??= _shaders.Any(
+                _isTexelFetchComposite ??= Sources.Any(
                     shader => shader.Stage == ShaderStage.Fragment &&
                               shader.Code != null &&
                               shader.Code.Contains(".read(uint2("));
@@ -122,9 +132,10 @@ namespace Ryujinx.Graphics.Metal
             {
                 if (_debugLabel == null)
                 {
+                    ShaderSource[] shaders = Sources;
                     int totalLength = 0;
 
-                    foreach (ShaderSource shader in _shaders)
+                    foreach (ShaderSource shader in shaders)
                     {
                         totalLength += Encoding.UTF8.GetByteCount(shader.Code) + 1;
                     }
@@ -132,7 +143,7 @@ namespace Ryujinx.Graphics.Metal
                     byte[] combined = new byte[totalLength];
                     int position = 0;
 
-                    foreach (ShaderSource shader in _shaders)
+                    foreach (ShaderSource shader in shaders)
                     {
                         position += Encoding.UTF8.GetBytes(shader.Code, combined.AsSpan(position));
                         combined[position++] = 0;
@@ -162,7 +173,7 @@ namespace Ryujinx.Graphics.Metal
             {
                 Directory.CreateDirectory(directory);
 
-                foreach (ShaderSource shader in _shaders)
+                foreach (ShaderSource shader in Sources)
                 {
                     string path = Path.Combine(directory, $"{DebugLabel}-{shader.Stage.ToString().ToLowerInvariant()}.metal");
 
@@ -176,6 +187,54 @@ namespace Ryujinx.Graphics.Metal
             {
                 Logger.Warning?.PrintMsg(LogClass.Gpu, $"Failed to dump shader sources for {DebugLabel}: {exception.Message}");
             }
+        }
+
+        /// <summary>The MSL of every stage; unpacked anew from the compressed copy once the program has compiled.</summary>
+        private ShaderSource[] Sources => Volatile.Read(ref _shaders) ?? MslProgramBinarySerializer.Unpack(UnpackSources());
+
+        private byte[] UnpackSources()
+        {
+            byte[] packed = Volatile.Read(ref _packedSources);
+            byte[] binary = new byte[_packedLength];
+
+            if (!BrotliDecoder.TryDecompress(packed, binary, out int written) || written != binary.Length)
+            {
+                throw new InvalidDataException("The compressed MSL of a program could not be unpacked.");
+            }
+
+            return binary;
+        }
+
+        /// <summary>
+        /// The program has compiled: keeps its MSL compressed from now on. What is worked out from the text on
+        /// the render thread is worked out first, so that a draw never has to unpack it.
+        /// </summary>
+        private void CompressSources()
+        {
+            ShaderSource[] shaders = _shaders;
+
+            if (_keepSources || shaders == null)
+            {
+                return;
+            }
+
+            _ = SourceHash;
+            _ = IsTexelFetchComposite;
+            _ = DebugLabel;
+
+            byte[] binary = MslProgramBinarySerializer.Pack(shaders);
+            byte[] packed = new byte[BrotliEncoder.GetMaxCompressedLength(binary.Length)];
+
+            if (!BrotliEncoder.TryCompress(binary, packed, out int written, quality: 1, window: 22))
+            {
+                return;
+            }
+
+            _packedLength = binary.Length;
+            Volatile.Write(ref _packedSources, packed.AsSpan(0, written).ToArray());
+
+            // Readers check the text first and fall back to the compressed copy, which is in place by now.
+            Volatile.Write(ref _shaders, null);
         }
 
         /// <summary>
@@ -1473,20 +1532,20 @@ namespace Ryujinx.Graphics.Metal
                 }
             }
 
-            _handles = new GCHandle[_shaders.Length];
+            _handles = new GCHandle[shaders.Length];
             // A fragment stage that stores to or atomically updates a storage buffer. On a
             // tile-based GPU every vertex stage of a render pass runs before any of its
             // fragment work, so a later draw's vertex shader in the same pass cannot see
             // these writes; a guest barrier after such a draw has to end the pass.
-            for (int i = 0; i < _shaders.Length; i++)
+            for (int i = 0; i < shaders.Length; i++)
             {
-                if (_shaders[i].Stage == ShaderStage.Fragment && _shaders[i].Code != null &&
-                    Regex.IsMatch(_shaders[i].Code, @"storage_buffers\.[a-z_0-9]+->data\[[^\]]+\] = |atomic_[a-z_]+_explicit\(\(device atomic_uint\*\)&storage_buffers"))
+                if (shaders[i].Stage == ShaderStage.Fragment && shaders[i].Code != null &&
+                    Regex.IsMatch(shaders[i].Code, @"storage_buffers\.[a-z_0-9]+->data\[[^\]]+\] = |atomic_[a-z_]+_explicit\(\(device atomic_uint\*\)&storage_buffers"))
                 {
                     FragmentWritesStorage = true;
                 }
-                if (_shaders[i].Stage == ShaderStage.Vertex && _shaders[i].Code != null &&
-                    _shaders[i].Code.Contains("storage_buffers.vp_s0->data[0]") && _shaders[i].Code.Contains("tex_vp_t_tcb_8.sample("))
+                if (shaders[i].Stage == ShaderStage.Vertex && shaders[i].Code != null &&
+                    shaders[i].Code.Contains("storage_buffers.vp_s0->data[0]") && shaders[i].Code.Contains("tex_vp_t_tcb_8.sample("))
                 {
                     IsFlareVertex = true;
                 }
@@ -1500,7 +1559,7 @@ namespace Ryujinx.Graphics.Metal
                 // Usable as far as the shader cache loader is concerned: the MSL compiled
                 // when it was cached, and it is compiled again off the boot path.
                 _status = ProgramLinkStatus.Success;
-                _libraries = new MTLLibrary[_shaders.Length];
+                _libraries = new MTLLibrary[shaders.Length];
                 _compilationEvent.Set();
             }
             else
@@ -1508,9 +1567,9 @@ namespace Ryujinx.Graphics.Metal
                 _status = ProgramLinkStatus.Incomplete;
                 _compileStart = Stopwatch.GetTimestamp();
 
-                for (int i = 0; i < _shaders.Length; i++)
+                for (int i = 0; i < shaders.Length; i++)
                 {
-                    ShaderSource shader = _shaders[i];
+                    ShaderSource shader = shaders[i];
 
                     using MTLCompileOptions compileOptions = CreateCompileOptions();
                     int index = i;
@@ -1569,10 +1628,11 @@ namespace Ryujinx.Graphics.Metal
                 if (!_compiled)
                 {
                     using MTLCompileOptions compileOptions = CreateCompileOptions();
+                    ShaderSource[] shaders = _shaders;
 
-                    for (int i = 0; i < _shaders.Length; i++)
+                    for (int i = 0; i < shaders.Length; i++)
                     {
-                        ShaderSource shader = _shaders[i];
+                        ShaderSource shader = shaders[i];
                         NSError error = new(IntPtr.Zero);
                         MTLLibrary library = _device.NewLibrary(StringHelper.NSString(PatchSourceForDiagnostics(shader)), compileOptions, ref error);
 
@@ -1609,6 +1669,10 @@ namespace Ryujinx.Graphics.Metal
                         // Too late to fall back to the guest code as the loader would have;
                         // binding it logs the missing function, as a failed compile always did.
                         _status = ProgramLinkStatus.Failure;
+                    }
+                    else
+                    {
+                        CompressSources();
                     }
 
                     _compiled = true;
@@ -1655,7 +1719,7 @@ namespace Ryujinx.Graphics.Metal
                     break;
             }
 
-            if (Interlocked.Increment(ref _successCount) >= _shaders.Length && _status != ProgramLinkStatus.Failure)
+            if (Interlocked.Increment(ref _successCount) >= _handles.Length && _status != ProgramLinkStatus.Failure)
             {
                 _status = ProgramLinkStatus.Success;
                 _compilationEvent.Set();
@@ -1669,6 +1733,8 @@ namespace Ryujinx.Graphics.Metal
                         Logger.Warning?.Print(LogClass.Gpu, $"Slow shader compile: {ms} ms for a new program ({string.Join(", ", Array.ConvertAll(_shaders, s => $"{s.Stage} {s.Code?.Length ?? 0} chars"))})");
                     }
                 }
+
+                CompressSources();
 
                 if (Volatile.Read(ref _prewarmStatus) == PrewarmPending)
                 {
@@ -1782,7 +1848,10 @@ namespace Ryujinx.Graphics.Metal
 
         public byte[] GetBinary()
         {
-            return MslProgramBinarySerializer.Pack(_shaders);
+            ShaderSource[] shaders = Volatile.Read(ref _shaders);
+
+            // The compressed copy holds exactly what Pack writes.
+            return shaders != null ? MslProgramBinarySerializer.Pack(shaders) : UnpackSources();
         }
 
         public void AddGraphicsPipeline(ref PipelineUid key, MTLRenderPipelineState pipeline)
@@ -1817,7 +1886,7 @@ namespace Ryujinx.Graphics.Metal
             {
                 if (_sourceHash == 0)
                 {
-                    _sourceHash = PipelineStateStore.HashSources(_shaders);
+                    _sourceHash = PipelineStateStore.HashSources(Sources);
                 }
 
                 return _sourceHash;
@@ -2089,7 +2158,7 @@ namespace Ryujinx.Graphics.Metal
 
             string planText = string.Join(",", plan.ToArray().Select(p => $"b{p.Binding}->c{p.Slot}"));
 
-            if (TryPatchFetch(_shaders, BindingSegments[(int)Constants.TexturesSetIndex], plan, out ShaderSource[] patched, out string reason))
+            if (TryPatchFetch(Sources, BindingSegments[(int)Constants.TexturesSetIndex], plan, out ShaderSource[] patched, out string reason))
             {
                 variant = new Program(_renderer, device, patched, _resourceLayout, ComputeLocalSize, FragmentOutputMap) { IsFetchVariant = true };
                 FetchVariantsCreated++;
