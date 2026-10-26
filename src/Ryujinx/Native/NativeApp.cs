@@ -25,6 +25,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
@@ -276,6 +277,42 @@ namespace Ryujinx.Ava.Native
             UpdateGraphicsConfig();
 
             NativeBridge.Post("settings.changed", new JsonObject());
+
+            ThreadPool.UnsafeQueueUserWorkItem(_ => ReleaseGameMemory(), null);
+        }
+
+        /// <summary>
+        /// A game has stopped: collects what it left on the managed heap and gives the memory back. In the library
+        /// almost nothing allocates, so no collection would run on its own, and the runtime keeps freed memory for
+        /// reuse (System.GC.RetainVM); after Breath of the Wild that was 1.6 GB of a 2 GB footprint.
+        /// </summary>
+        private static void ReleaseGameMemory()
+        {
+            // Let the rest of the teardown (render thread, audio, finalizers) finish first.
+            Thread.Sleep(2000);
+
+            lock (_hostLock)
+            {
+                if (_host != null)
+                {
+                    return;
+                }
+            }
+
+            long start = Stopwatch.GetTimestamp();
+            GCMemoryInfo before = GC.GetGCMemoryInfo();
+
+            GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+
+            GCMemoryInfo after = GC.GetGCMemoryInfo();
+
+            Logger.Info?.Print(LogClass.Application,
+                $"Released the stopped game's memory in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F0} ms: managed heap " +
+                $"{before.HeapSizeBytes >> 20} MiB in use, {before.TotalCommittedBytes >> 20} MiB committed before, " +
+                $"{after.HeapSizeBytes >> 20} MiB in use, {after.TotalCommittedBytes >> 20} MiB committed after");
         }
 
         public static void OnViewResized(double width, double height, double scale)
