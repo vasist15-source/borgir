@@ -1109,9 +1109,17 @@ namespace Ryujinx.Graphics.Gpu.Image
         /// <param name="texture">The specific host texture to flush. Defaults to this texture</param>
         public void FlushTextureDataToGuest(bool tracked, ITexture texture = null)
         {
-            using WritableRegion region = _physicalMemory.GetWritableRegion(Range, tracked);
+            long readback = ReadbackLog.Start();
 
-            GetTextureDataFromGpu(region.Memory.Span, tracked, texture);
+            using (WritableRegion region = _physicalMemory.GetWritableRegion(Range, tracked))
+            {
+                GetTextureDataFromGpu(region.Memory.Span, tracked, texture);
+            }
+
+            if (readback != 0)
+            {
+                ReadbackLog.AddCopy(readback, (long)Size, $"texture {Info.FormatInfo.Format} {Info.Width}x{Info.Height} {Info.Target}, whole");
+            }
         }
 
         /// <summary>

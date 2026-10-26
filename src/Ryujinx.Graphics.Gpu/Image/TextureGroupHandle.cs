@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Graphics.Gpu.Synchronization;
 using Ryujinx.Memory.Tracking;
@@ -380,7 +381,11 @@ namespace Ryujinx.Graphics.Gpu.Image
 
             if (diff > 0)
             {
+                long readbackWait = ReadbackLog.Start();
+
                 context.Renderer.WaitSync(sync, inBuffer ? HostSyncWaitSource.TextureGroupInBuffer : HostSyncWaitSource.TextureGroup);
+
+                ReadbackLog.AddWait(readbackWait);
 
                 if ((long)(_modifiedSync - sync) > 0)
                 {

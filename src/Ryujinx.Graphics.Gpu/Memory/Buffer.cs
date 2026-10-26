@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Graphics.Gpu.Synchronization;
 using Ryujinx.Memory.Range;
@@ -700,6 +701,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         {
             BackingState.RecordFlush();
 
+            long readback = ReadbackLog.Start();
             BufferPreFlush preFlush = _preFlush;
 
             if (preFlush != null)
@@ -710,6 +712,8 @@ namespace Ryujinx.Graphics.Gpu.Memory
             {
                 FlushImpl(address, size);
             }
+
+            ReadbackLog.AddCopy(readback, (long)size, "buffer");
         }
         /// <summary>
         /// Gets an action that disposes the backing buffer using its current handle.
@@ -739,7 +743,11 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
             return (address, size, _) =>
             {
+                long readback = ReadbackLog.Start();
+
                 FlushImpl(handle, address, size);
+
+                ReadbackLog.AddCopy(readback, (long)size, "buffer, old copy");
             };
         }
 
@@ -771,8 +779,19 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
                 if (ranges != null)
                 {
-                    (address, size) = PageAlign(address, size);
-                    ranges.WaitForAndFlushRanges(address, size);
+                    long readback = ReadbackLog.Enabled
+                        ? ReadbackLog.BeginAccess($"buffer of {Size / 1024} KB{(_preFlush != null ? ", copied ahead" : "")}", size)
+                        : 0;
+
+                    try
+                    {
+                        (address, size) = PageAlign(address, size);
+                        ranges.WaitForAndFlushRanges(address, size);
+                    }
+                    finally
+                    {
+                        ReadbackLog.EndAccess(readback);
+                    }
                 }
             }, true);
         }

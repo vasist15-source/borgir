@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Memory.Range;
 using System;
@@ -455,7 +456,11 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
             // Wait without holding the range lock. Another thread may update the list
             // while waiting, so the overlapping ranges are queried again afterwards.
+            long readbackWait = ReadbackLog.Start();
+
             _context.Renderer.WaitSync(currentSync + (ulong)highestDiff, HostSyncWaitSource.BufferModifiedRange);
+
+            ReadbackLog.AddWait(readbackWait);
 
             Lock.EnterWriteLock();
 

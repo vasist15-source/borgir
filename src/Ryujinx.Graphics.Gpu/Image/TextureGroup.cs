@@ -1,3 +1,4 @@
+using Ryujinx.Common.Logging;
 using Ryujinx.Common.Memory;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Graphics.Gpu.Memory;
@@ -591,18 +592,37 @@ namespace Ryujinx.Graphics.Gpu.Image
             int endOffset = Math.Min(offset + _sliceSizes[level], (int)Storage.Size);
             int size = endOffset - offset;
 
-            using WritableRegion region = _physicalMemory.GetWritableRegion(Storage.Range.Slice((ulong)offset, (ulong)size), tracked);
+            long readback = ReadbackLog.Start();
 
-            if (inBuffer)
+            using (WritableRegion region = _physicalMemory.GetWritableRegion(Storage.Range.Slice((ulong)offset, (ulong)size), tracked))
             {
-                using PinnedSpan<byte> data = _context.Renderer.GetBufferData(_flushBuffer, offset, size);
+                if (inBuffer)
+                {
+                    using PinnedSpan<byte> data = _context.Renderer.GetBufferData(_flushBuffer, offset, size);
 
-                Storage.ConvertFromHostCompatibleFormat(region.Memory.Span, data.Get(), level, true);
+                    Storage.ConvertFromHostCompatibleFormat(region.Memory.Span, data.Get(), level, true);
+                }
+                else
+                {
+                    Storage.GetTextureDataSliceFromGpu(region.Memory.Span, layer, level, tracked, texture);
+                }
             }
-            else
+
+            if (readback != 0)
             {
-                Storage.GetTextureDataSliceFromGpu(region.Memory.Span, layer, level, tracked, texture);
+                ReadbackLog.AddCopy(readback, size, $"texture {DescribeForReadback()}");
             }
+        }
+
+        /// <summary>The storage texture, as the readback log names it.</summary>
+        private string DescribeForReadback()
+        {
+            TextureInfo info = Storage.Info;
+
+            return $"{info.FormatInfo.Format} {info.Width}x{info.Height}" +
+                (info.GetSlices() > 1 ? $"x{info.GetSlices()}" : "") +
+                (info.Levels > 1 ? $" {info.Levels} levels" : "") +
+                $" {info.Target}";
         }
 
         /// <summary>
@@ -1748,23 +1768,37 @@ namespace Ryujinx.Graphics.Gpu.Image
                 handle.Modified = false;
             }
 
+            // On the GPU thread the copy runs later on the render thread, so the log names who asked for it.
+            string readbackBy = ReadbackLog.Enabled ? System.Threading.Thread.CurrentThread.Name : null;
+
             _context.Renderer.BackgroundContextAction(() =>
             {
-                bool inBuffer = !isGpuThread && handle.Sync(_context);
+                long readback = ReadbackLog.Enabled
+                    ? ReadbackLog.BeginAccess($"texture {DescribeForReadback()}, part of {handle.Size / 1024} KB", size, readbackBy)
+                    : 0;
 
-                Storage.SignalModifiedDirty();
-
-                lock (handle.Overlaps)
+                try
                 {
-                    foreach (Texture texture in handle.Overlaps)
+                    bool inBuffer = !isGpuThread && handle.Sync(_context);
+
+                    Storage.SignalModifiedDirty();
+
+                    lock (handle.Overlaps)
                     {
-                        texture.SignalModifiedDirty();
+                        foreach (Texture texture in handle.Overlaps)
+                        {
+                            texture.SignalModifiedDirty();
+                        }
+                    }
+
+                    if (TextureCompatibility.CanTextureFlush(Storage.Info, _context.Capabilities) && !(inBuffer && _flushBufferImported))
+                    {
+                        FlushSliceRange(false, handle.BaseSlice, handle.BaseSlice + handle.SliceCount, inBuffer, Storage.GetFlushTexture());
                     }
                 }
-
-                if (TextureCompatibility.CanTextureFlush(Storage.Info, _context.Capabilities) && !(inBuffer && _flushBufferImported))
+                finally
                 {
-                    FlushSliceRange(false, handle.BaseSlice, handle.BaseSlice + handle.SliceCount, inBuffer, Storage.GetFlushTexture());
+                    ReadbackLog.EndAccess(readback);
                 }
             });
         }
