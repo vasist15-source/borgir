@@ -119,6 +119,11 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
         private bool _rebind;
 
+        // Each binding slot's last buffer lookup (BufferLookup): the slot binds the same range draw after draw.
+        private readonly BufferLookup[][] _gpUniformLookups;
+        private readonly BufferLookup[] _vertexLookups;
+        private BufferLookup _indexLookup;
+
         /// <summary>
         /// Creates a new instance of the buffer manager.
         /// </summary>
@@ -140,12 +145,15 @@ namespace Ryujinx.Graphics.Gpu.Memory
             _gpStorageBuffers = new BuffersPerStage[Constants.ShaderStages];
             _gpUniformBuffers = new BuffersPerStage[Constants.ShaderStages];
             _gpUniformSnapshots = new Engine.GPFifo.UniformSubmitSnapshot.Ref[Constants.ShaderStages][];
+            _gpUniformLookups = new BufferLookup[Constants.ShaderStages][];
+            _vertexLookups = new BufferLookup[Constants.TotalVertexBuffers];
 
             for (int index = 0; index < Constants.ShaderStages; index++)
             {
                 _gpStorageBuffers[index] = new BuffersPerStage(Constants.TotalGpStorageBuffers);
                 _gpUniformBuffers[index] = new BuffersPerStage(Constants.TotalGpUniformBuffers);
                 _gpUniformSnapshots[index] = new Engine.GPFifo.UniformSubmitSnapshot.Ref[Constants.TotalGpUniformBuffers];
+                _gpUniformLookups[index] = new BufferLookup[Constants.TotalGpUniformBuffers];
             }
 
             _bufferTextures = [];
@@ -163,7 +171,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <param name="type">Type of each index buffer element</param>
         public void SetIndexBuffer(ulong gpuVa, ulong size, IndexType type)
         {
-            MultiRange range = _channel.MemoryManager.Physical.BufferCache.TranslateAndCreateBuffer(_channel.MemoryManager, gpuVa, size, BufferStage.IndexBuffer);
+            MultiRange range = _channel.MemoryManager.Physical.BufferCache.TranslateAndCreateBuffer(_channel.MemoryManager, gpuVa, size, BufferStage.IndexBuffer, ref _indexLookup);
 
             _indexBuffer.Range = range;
             _indexBuffer.Type = type;
@@ -193,7 +201,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <param name="divisor">Vertex divisor of the buffer, for instanced draws</param>
         public void SetVertexBuffer(int index, ulong gpuVa, ulong size, int stride, int divisor)
         {
-            MultiRange range = _channel.MemoryManager.Physical.BufferCache.TranslateAndCreateBuffer(_channel.MemoryManager, gpuVa, size, BufferStage.VertexBuffer);
+            MultiRange range = _channel.MemoryManager.Physical.BufferCache.TranslateAndCreateBuffer(_channel.MemoryManager, gpuVa, size, BufferStage.VertexBuffer, ref _vertexLookups[index]);
 
             _vertexBuffers[index].Range = range;
             _vertexBuffers[index].Stride = stride;
@@ -325,7 +333,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <param name="size">Size in bytes of the storage buffer</param>
         public void SetGraphicsUniformBuffer(int stage, int index, ulong gpuVa, ulong size)
         {
-            MultiRange range = _channel.MemoryManager.Physical.BufferCache.TranslateAndCreateBuffer(_channel.MemoryManager, gpuVa, size, BufferStageUtils.FromShaderStage(stage));
+            MultiRange range = _channel.MemoryManager.Physical.BufferCache.TranslateAndCreateBuffer(_channel.MemoryManager, gpuVa, size, BufferStageUtils.FromShaderStage(stage), ref _gpUniformLookups[stage][index]);
 
             _gpUniformSnapshots[stage][index] = Engine.GPFifo.UniformSubmitSnapshot.Capture(gpuVa, size);
             _gpUniformBuffers[stage].SetBounds(index, range);
@@ -634,14 +642,14 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
                     if (!_indexBuffer.Range.IsUnmapped)
                     {
-                        BufferRange buffer = bufferCache.GetBufferRange(_indexBuffer.Range, BufferStage.IndexBuffer);
+                        BufferRange buffer = bufferCache.GetBufferRange(_indexBuffer.Range, BufferStage.IndexBuffer, ref _indexLookup);
 
                         _context.Renderer.Pipeline.SetIndexBuffer(buffer, _indexBuffer.Type);
                     }
                 }
                 else if (!_indexBuffer.Range.IsUnmapped)
                 {
-                    bufferCache.SynchronizeBufferRange(_indexBuffer.Range);
+                    bufferCache.SynchronizeBufferRange(_indexBuffer.Range, ref _indexLookup);
                 }
             }
             else if (_rebind)
@@ -666,7 +674,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
                         continue;
                     }
 
-                    BufferRange buffer = bufferCache.GetBufferRange(vb.Range, BufferStage.VertexBuffer);
+                    BufferRange buffer = bufferCache.GetBufferRange(vb.Range, BufferStage.VertexBuffer, ref _vertexLookups[index]);
 
                     vertexBuffers[index] = new VertexBufferDescriptor(buffer, vb.Stride, vb.Divisor);
                 }
@@ -684,7 +692,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
                         continue;
                     }
 
-                    bufferCache.SynchronizeBufferRange(vb.Range);
+                    bufferCache.SynchronizeBufferRange(vb.Range, ref _vertexLookups[index]);
                 }
             }
 
@@ -806,7 +814,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
             }
             else
             {
-                UpdateBuffers(_gpUniformBuffers);
+                UpdateBuffers(_gpUniformBuffers, _gpUniformLookups);
             }
 
             CommitBufferTextureBindings(bufferCache);
@@ -848,8 +856,8 @@ namespace Ryujinx.Graphics.Gpu.Memory
                         BufferRange range = isStorage
                             ? bufferCache.GetBufferRangeAligned(bounds.Range, bufferStage | BufferStageUtils.FromUsage(bounds.Flags), isWrite)
                             : snapshotLinked
-                                ? bufferCache.GetBufferRange(bounds.Range, bufferStage, out gpuModified)
-                                : bufferCache.GetBufferRange(bounds.Range, bufferStage);
+                                ? bufferCache.GetBufferRange(bounds.Range, bufferStage, ref _gpUniformLookups[(int)stage - 1][bindingInfo.Slot], out gpuModified)
+                                : bufferCache.GetBufferRange(bounds.Range, bufferStage, ref _gpUniformLookups[(int)stage - 1][bindingInfo.Slot]);
 
                         if (snapshotLinked)
                         {
@@ -928,7 +936,8 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// Updates data for the already bound buffer bindings.
         /// </summary>
         /// <param name="bindings">Bindings to update</param>
-        private void UpdateBuffers(BuffersPerStage[] bindings)
+        /// <param name="lookups">The bindings' last buffer lookups by stage and slot, or null to search for every one</param>
+        private void UpdateBuffers(BuffersPerStage[] bindings, BufferLookup[][] lookups = null)
         {
             for (ShaderStage stage = ShaderStage.Vertex; stage <= ShaderStage.Fragment; stage++)
             {
@@ -945,7 +954,14 @@ namespace Ryujinx.Graphics.Gpu.Memory
                         continue;
                     }
 
-                    _channel.MemoryManager.Physical.BufferCache.SynchronizeBufferRange(bounds.Range);
+                    if (lookups != null)
+                    {
+                        _channel.MemoryManager.Physical.BufferCache.SynchronizeBufferRange(bounds.Range, ref lookups[(int)stage - 1][binding.Slot]);
+                    }
+                    else
+                    {
+                        _channel.MemoryManager.Physical.BufferCache.SynchronizeBufferRange(bounds.Range);
+                    }
                 }
             }
         }

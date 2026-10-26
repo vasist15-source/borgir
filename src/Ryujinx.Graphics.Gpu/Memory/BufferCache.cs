@@ -3,6 +3,7 @@ using Ryujinx.Memory.Range;
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace Ryujinx.Graphics.Gpu.Memory
 {
@@ -49,6 +50,16 @@ namespace Ryujinx.Graphics.Gpu.Memory
         public event Action NotifyBuffersModified;
 
         /// <summary>
+        /// RYUJINX_BUFFER_LOOKUP_CACHE=0 turns off <see cref="BufferLookup"/>: every binding searches the buffer list
+        /// again, as before.
+        /// </summary>
+        public static readonly bool LookupCacheEnabled = Environment.GetEnvironmentVariable("RYUJINX_BUFFER_LOOKUP_CACHE") != "0";
+
+        // Generations come from one counter shared by every cache, so a lookup made in one cache never matches another.
+        private static int _generationSource;
+        private int _generation = Interlocked.Increment(ref _generationSource);
+
+        /// <summary>
         /// Creates a new instance of the buffer manager.
         /// </summary>
         /// <param name="context">The GPU context that the buffer manager belongs to</param>
@@ -87,6 +98,66 @@ namespace Ryujinx.Graphics.Gpu.Memory
                     overlaps[i].Unmapped(subRange.Address, subRange.Size);
                 }
             }
+
+            BuffersChanged();
+        }
+
+        /// <summary>The list of buffers has changed: every <see cref="BufferLookup"/> made so far must search again.</summary>
+        private void BuffersChanged()
+        {
+            _generation = Interlocked.Increment(ref _generationSource);
+        }
+
+        /// <summary>
+        /// The buffer that holds a range, from <paramref name="lookup"/> when it was made for the same range since the
+        /// list of buffers last changed, or found and remembered there otherwise.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private Buffer FindBuffer(ulong address, ulong size, ref BufferLookup lookup)
+        {
+            if (lookup.Generation == _generation && lookup.Address == address && lookup.Size == size && LookupCacheEnabled)
+            {
+                return lookup.Buffer;
+            }
+
+            Buffer buffer = _buffers.FindOverlap(address, size);
+
+            lookup.Address = address;
+            lookup.Size = size;
+            lookup.Generation = _generation;
+            lookup.Buffer = buffer;
+
+            return buffer;
+        }
+
+        /// <summary>
+        /// Performs address translation of the GPU virtual address, and creates a new buffer, if needed, for the
+        /// specified contiguous range. A binding slot passes its <paramref name="lookup"/>: when it already found a
+        /// buffer holding this range since the list of buffers last changed, there is nothing to create.
+        /// </summary>
+        public MultiRange TranslateAndCreateBuffer(MemoryManager memoryManager, ulong gpuVa, ulong size, BufferStage stage, ref BufferLookup lookup)
+        {
+            if (gpuVa == 0)
+            {
+                return new MultiRange(MemoryManager.PteUnmapped, size);
+            }
+
+            ulong address = memoryManager.Translate(gpuVa);
+
+            if (address != MemoryManager.PteUnmapped)
+            {
+                if (lookup.Generation != _generation || lookup.Address != address || lookup.Size != size || !LookupCacheEnabled)
+                {
+                    CreateBuffer(address, size, stage);
+
+                    if (size != 0)
+                    {
+                        FindBuffer(address, size, ref lookup);
+                    }
+                }
+            }
+
+            return new MultiRange(address, size);
         }
 
         /// <summary>
@@ -535,16 +606,19 @@ namespace Ryujinx.Graphics.Gpu.Memory
                     Buffer[] overlapsArray = overlaps.ToArray();
                     
                     _buffers.RemoveRange(overlaps[0], overlaps[^1]);
+                    BuffersChanged();
                     
                     ulong newSize = endAddress - address;
 
                     _buffers.Add(CreateBufferAligned(address, newSize, stage, anySparseCompatible, overlapsArray));
+                    BuffersChanged();
                 }
             }
             else
             {
                 // No overlap, just create a new buffer.
                 _buffers.Add(new(_context, _physicalMemory, address, size, stage, sparseCompatible: false, []));
+                BuffersChanged();
             }
         }
 
@@ -600,14 +674,17 @@ namespace Ryujinx.Graphics.Gpu.Memory
                     Buffer[] overlapsArray = overlaps.ToArray();
                     
                     _buffers.RemoveRange(overlaps[0], overlaps[^1]);
+                    BuffersChanged();
                     
                     _buffers.Add(CreateBufferAligned(address, newSize, stage, sparseAligned, overlapsArray));
+                    BuffersChanged();
                 }
             }
             else
             {
                 // No overlap, just create a new buffer.
                 _buffers.Add(new(_context, _physicalMemory, address, size, stage, sparseAligned, []));
+                BuffersChanged();
             } 
         }
 
@@ -842,6 +919,42 @@ namespace Ryujinx.Graphics.Gpu.Memory
         }
 
         /// <summary>
+        /// Gets a buffer sub-range for a given memory range, finding the buffer through a binding slot's
+        /// <paramref name="lookup"/> when the range is contiguous.
+        /// </summary>
+        public BufferRange GetBufferRange(MultiRange range, BufferStage stage, ref BufferLookup lookup, bool write = false)
+        {
+            if (range.Count > 1)
+            {
+                return GetBuffer(range, stage, write).GetRange(range);
+            }
+
+            MemoryRange subRange = range.GetSubRange(0);
+
+            return GetBuffer(subRange.Address, subRange.Size, stage, ref lookup, write).GetRange(subRange.Address, subRange.Size, write);
+        }
+
+        /// <summary>
+        /// <see cref="GetBufferRange(MultiRange, BufferStage, out bool)"/>, finding the buffer through a binding slot's
+        /// <paramref name="lookup"/> when the range is contiguous.
+        /// </summary>
+        public BufferRange GetBufferRange(MultiRange range, BufferStage stage, ref BufferLookup lookup, out bool gpuModified)
+        {
+            if (range.Count > 1)
+            {
+                gpuModified = true;
+
+                return GetBuffer(range, stage, false).GetRange(range);
+            }
+
+            MemoryRange subRange = range.GetSubRange(0);
+            Buffer buffer = GetBuffer(subRange.Address, subRange.Size, stage, ref lookup, false);
+            gpuModified = buffer.IsModified(subRange.Address, subRange.Size);
+
+            return buffer.GetRange(subRange.Address, subRange.Size, false);
+        }
+
+        /// <summary>
         /// Gets a buffer sub-range for reading a given memory range, and whether the GPU wrote to the range
         /// without the write having been flushed back to guest memory yet.
         /// </summary>
@@ -946,6 +1059,54 @@ namespace Ryujinx.Graphics.Gpu.Memory
         }
 
         /// <summary>
+        /// <see cref="GetBuffer(ulong, ulong, BufferStage, bool)"/>, finding the buffer through a binding slot's
+        /// <paramref name="lookup"/>.
+        /// </summary>
+        private Buffer GetBuffer(ulong address, ulong size, BufferStage stage, ref BufferLookup lookup, bool write)
+        {
+            if (size == 0)
+            {
+                return _buffers.FindOverlapFast(address, 1);
+            }
+
+            Buffer buffer = FindBuffer(address, size, ref lookup);
+
+            buffer.CopyFromDependantVirtualBuffers();
+            buffer.SynchronizeMemory(address, size);
+
+            if (write)
+            {
+                buffer.SignalModified(address, size, stage);
+            }
+
+            return buffer;
+        }
+
+        /// <summary>
+        /// Performs guest to host memory synchronization of a given memory range, finding the buffer through a binding
+        /// slot's <paramref name="lookup"/> when the range is contiguous.
+        /// </summary>
+        public void SynchronizeBufferRange(MultiRange range, ref BufferLookup lookup)
+        {
+            if (range.Count != 1)
+            {
+                SynchronizeBufferRange(range);
+
+                return;
+            }
+
+            MemoryRange subRange = range.GetSubRange(0);
+
+            if (subRange.Size != 0)
+            {
+                Buffer buffer = FindBuffer(subRange.Address, subRange.Size, ref lookup);
+
+                buffer.CopyFromDependantVirtualBuffers();
+                buffer.SynchronizeMemory(subRange.Address, subRange.Size);
+            }
+        }
+
+        /// <summary>
         /// Performs guest to host memory synchronization of a given memory range.
         /// </summary>
         /// <param name="range">Physical regions of memory where the buffer is mapped</param>
@@ -995,6 +1156,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
         /// <param name="buffer">The buffer that has changed handle</param>
         public void BufferBackingChanged(Buffer buffer)
         {
+            BuffersChanged();
             NotifyBuffersModified?.Invoke();
 
             RecreateMultiRangeBuffers(buffer.Address, buffer.Size);
