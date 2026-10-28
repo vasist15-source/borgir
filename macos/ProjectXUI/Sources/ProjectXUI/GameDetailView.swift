@@ -10,6 +10,7 @@ struct GameDetailView: View {
     @ViewState private var loads = 0
     @ViewState private var showsDetails = false
     @ViewState private var showsSettings = false
+    @ViewState private var showsMods = false
 
     var body: some View {
         Form {
@@ -67,6 +68,9 @@ struct GameDetailView: View {
         }
         .sheet(isPresented: $showsSettings, onDismiss: reload) {
             GameSettingsSheet(game: game)
+        }
+        .sheet(isPresented: $showsMods, onDismiss: reload) {
+            ModsSheet(game: game)
         }
         .onReceive(NotificationCenter.default.publisher(for: .pxShowGameSettings)) { note in
             if note.object as? String == game.id {
@@ -251,7 +255,10 @@ struct GameDetailView: View {
                     .contextMenu {
                         Button("Show in Finder") { reveal(mod.path) }
                         Button("Move to Trash…") {
-                            model.trashMod(mod) { reload() }
+                            model.trashMods([mod]) { problem in
+                                model.alert = problem
+                                reload()
+                            }
                         }
                     }
                 }
@@ -261,8 +268,8 @@ struct GameDetailView: View {
             }
 
             HStack {
-                Button("Import Mod…") {
-                    model.importMods(for: game) { reload() }
+                Button("Manage Mods…") {
+                    showsMods = true
                 }
 
                 Spacer()
@@ -274,7 +281,7 @@ struct GameDetailView: View {
         } header: {
             Text("Mods")
         } footer: {
-            Text("Import a mod's folder or its download (ZIP, 7z or RAR): Borgir finds the mod inside and installs it for this game, where Ryujinx keeps mods too. Mod changes apply the next time the game starts.")
+            Text("Mod changes apply the next time the game starts.")
         }
     }
 
@@ -471,26 +478,23 @@ extension AppModel {
         }
     }
 
-    /// Imports mods from folders or downloaded archives, off the main thread since mods can be large. The core finds
-    /// the mods inside and checks which game they are for.
-    func importMods(for game: Game, completion: @escaping @MainActor () -> Void) {
+    /// Asks for mods to add to the game: folders, or downloaded archives.
+    func chooseMods(for game: Game) -> [URL]? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = [.folder, .zip] + ["7z", "rar"].compactMap { UTType(filenameExtension: $0) }
-        panel.prompt = "Import"
+        panel.prompt = "Add"
         panel.message = "Choose mods for \(game.name): a mod's folder, or the ZIP, 7z or RAR file you downloaded."
 
-        guard panel.runModal() == .OK else {
-            return
-        }
+        return panel.runModal() == .OK ? panel.urls : nil
+    }
 
-        let sources = panel.urls
-        let id = game.id
-        busyMessage = sources.count == 1 ? "Importing \(sources[0].lastPathComponent)…" : "Importing \(sources.count) mods…"
-
-        Task.detached(priority: .userInitiated) {
+    /// Installs mods from folders or downloaded archives, off the main thread since mods can be large. The core finds
+    /// the mods inside and checks which game they are for. Returns what the user should hear about, if anything.
+    nonisolated static func installMods(_ sources: [URL], for id: String) async -> AlertMessage? {
+        await Task.detached(priority: .userInitiated) {
             var notes: [String] = []
             var failures = 0
 
@@ -501,7 +505,7 @@ extension AppModel {
 
                 if reply["ok"] as? Bool != true {
                     failures += 1
-                    notes.append("\(source.lastPathComponent): \(reply["error"] as? String ?? "it could not be imported.")")
+                    notes.append("\(source.lastPathComponent): \(reply["error"] as? String ?? "it could not be added.")")
                     continue
                 }
 
@@ -510,28 +514,26 @@ extension AppModel {
                     notes.append("\(source.lastPathComponent) had \(imported.count) mods: \(imported.joined(separator: ", ")). Turn off the ones you don't want.")
                 }
 
-                notes.append(contentsOf: skipped.map { "Not imported from \(source.lastPathComponent): \($0)" })
+                notes.append(contentsOf: skipped.map { "Not added from \(source.lastPathComponent): \($0)" })
             }
 
-            let summary = notes
-            let allFailed = failures == sources.count
-
-            await MainActor.run {
-                self.busyMessage = nil
-
-                if !summary.isEmpty {
-                    self.alert = AlertMessage(title: allFailed ? "Unable to Import the Mod" : "Mods Imported", message: summary.joined(separator: "\n\n"))
-                }
-
-                completion()
+            guard !notes.isEmpty else {
+                return nil
             }
-        }
+
+            return AlertMessage(title: failures == sources.count ? "Unable to Add the Mod" : "Mods Added", message: notes.joined(separator: "\n\n"))
+        }.value
     }
 
-    func trashMod(_ mod: GameMod, completion: @escaping @MainActor () -> Void) {
+    /// Moves mods to the Trash once the user confirms. The completion gets a message if that failed.
+    func trashMods(_ mods: [GameMod], completion: @escaping @MainActor (AlertMessage?) -> Void) {
+        guard !mods.isEmpty else {
+            return
+        }
+
         let confirm = NSAlert()
-        confirm.messageText = "Move “\(mod.name)” to the Trash?"
-        confirm.informativeText = mod.path
+        confirm.messageText = mods.count == 1 ? "Move “\(mods[0].name)” to the Trash?" : "Move \(mods.count) mods to the Trash?"
+        confirm.informativeText = mods.map(\.path).joined(separator: "\n")
         confirm.addButton(withTitle: "Move to Trash")
         confirm.addButton(withTitle: "Cancel")
 
@@ -539,13 +541,9 @@ extension AppModel {
             return
         }
 
-        NSWorkspace.shared.recycle([URL(fileURLWithPath: mod.path)]) { _, error in
+        NSWorkspace.shared.recycle(mods.map { URL(fileURLWithPath: $0.path) }) { _, error in
             Task { @MainActor in
-                if let error {
-                    self.alert = AlertMessage(title: "Unable to Move the Mod to the Trash", message: error.localizedDescription)
-                }
-
-                completion()
+                completion(error.map { AlertMessage(title: "Unable to Move the Mod to the Trash", message: $0.localizedDescription) })
             }
         }
     }

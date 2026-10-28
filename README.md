@@ -10,7 +10,7 @@
 - **A native macOS interface.** SwiftUI windows for the game library, settings, keys and firmware, built from
   [`macos/ProjectXUI`](macos/ProjectXUI).
 - **Game details.** Clicking a game opens a pane with a Play button, its settings, update (pick one or add files), DLC,
-  mods (toggle, import a mod folder or a ZIP, 7z or RAR download, move one to the Trash) and cheats (toggle, even while
+  mods (toggle, add a mod folder or a ZIP, 7z or RAR download, remove one, which moves it to the Trash) and cheats (toggle, even while
   it runs; add cheat files).
 - **Per-game settings.** A game can have its own resolution, docked mode, V-Sync, hypervisor, DRAM size and more;
   everything else follows the global settings. Changes made in a game's overlay become that game's own settings.
