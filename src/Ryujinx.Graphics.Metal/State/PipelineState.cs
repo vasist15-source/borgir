@@ -1,4 +1,5 @@
 using Ryujinx.Common.Logging;
+using Ryujinx.Common.Memory;
 using Ryujinx.Graphics.GAL;
 using SharpMetal.Foundation;
 using SharpMetal.Metal;
@@ -201,7 +202,7 @@ namespace Ryujinx.Graphics.Metal
             VertexBindingDescriptionsCount = Constants.ZeroBufferIndex + 1; // TODO: move this out?
         }
 
-        private readonly MTLVertexDescriptor BuildVertexDescriptor(bool prewarm)
+        internal readonly MTLVertexDescriptor BuildVertexDescriptor(bool prewarm)
         {
             MTLVertexDescriptor vertexDescriptor = new();
 
@@ -238,62 +239,85 @@ namespace Ryujinx.Graphics.Metal
             return vertexDescriptor;
         }
 
-        private readonly MTLRenderPipelineDescriptor CreateRenderDescriptor(Program program)
+        /// <summary>
+        /// A pre-warm worker's build of this state ahead of its draw, from its Metal 4 base when it can be: no tile
+        /// snapshot slot (the static belongs to the pass the render thread is encoding) and no draw-time probes.
+        /// </summary>
+        public readonly MTLRenderPipelineState BuildAheadOfUse(MTLDevice device, Program program, ref NSError error)
         {
-            return CreateRenderDescriptor(program, SnapshotSlot, prewarm: false);
+            Array8<ColorBlendStateUid> colors = GetColorAttachments(program, snapshotSlot: -1);
+            PipelineUid key = Internal;
+
+            if (Metal4Pipelines.CanBuild(program, LogicOpEnable) &&
+                Metal4Pipelines.TryBuild(program, ref key, colors, out MTLRenderPipelineState pipeline))
+            {
+                return pipeline;
+            }
+
+            using MTLRenderPipelineDescriptor descriptor = CreateRenderDescriptor(program, colors, prewarm: true);
+
+            return device.NewRenderPipelineState(descriptor, ref error);
         }
 
         /// <summary>
-        /// The descriptor for a pipeline built off the render thread ahead of its draw: no
-        /// tile snapshot slot (the static belongs to the pass the render thread is encoding)
-        /// and no draw-time probes.
+        /// The colour attachments this state's pipeline is built with: the key's, with writes masked off for the pass's
+        /// tile snapshot slot and for outputs the fragment function does not write. Taken when the build is asked for,
+        /// so a build on another thread gets the snapshot slot of the pass that asked.
         /// </summary>
-        public readonly MTLRenderPipelineDescriptor CreatePrewarmDescriptor(Program program)
+        public readonly Array8<ColorBlendStateUid> GetColorAttachments(Program program, int snapshotSlot)
         {
-            return CreateRenderDescriptor(program, snapshotSlot: -1, prewarm: true);
+            Array8<ColorBlendStateUid> colors = Internal.ColorBlendState;
+
+            for (int i = 0; i < Constants.MaxColorAttachments; i++)
+            {
+                ref ColorBlendStateUid blendState = ref colors[i];
+
+                if (blendState.PixelFormat == MTLPixelFormat.Invalid)
+                {
+                    continue;
+                }
+
+                if (i == snapshotSlot)
+                {
+                    blendState.WriteMask = MTLColorWriteMask.None;
+                }
+
+                // An attachment the fragment function does not write gets UNDEFINED
+                // contents from Metal (the OpenGL backend masks these with the program's
+                // FragmentOutputMap; MoltenVK disables the write mask for them). Without
+                // this, a render target the guest left bound - e.g. the scene texture
+                // during the game's upscaler draw - is overwritten with garbage.
+                // RYUJINX_METAL_MASK_UNWRITTEN=0 opts out.
+                if (MaskUnwrittenOutputs && program.FragmentOutputMap != -1)
+                {
+                    uint bits = ((uint)program.FragmentOutputMap >> (i * 4)) & 0xFu;
+                    MTLColorWriteMask allowed = MTLColorWriteMask.None;
+                    allowed |= (bits & 1u) != 0 ? MTLColorWriteMask.Red : 0;
+                    allowed |= (bits & 2u) != 0 ? MTLColorWriteMask.Green : 0;
+                    allowed |= (bits & 4u) != 0 ? MTLColorWriteMask.Blue : 0;
+                    allowed |= (bits & 8u) != 0 ? MTLColorWriteMask.Alpha : 0;
+                    MTLColorWriteMask before = blendState.WriteMask;
+                    MTLColorWriteMask after = before & allowed;
+                    if (after != before)
+                    {
+                        blendState.WriteMask = after;
+                        Interlocked.Increment(ref MaskedUnwrittenCount);
+                    }
+                }
+            }
+
+            return colors;
         }
 
-        private readonly MTLRenderPipelineDescriptor CreateRenderDescriptor(Program program, int snapshotSlot, bool prewarm)
+        private readonly MTLRenderPipelineDescriptor CreateRenderDescriptor(Program program, Array8<ColorBlendStateUid> colors, bool prewarm)
         {
             MTLRenderPipelineDescriptor renderPipelineDescriptor = new();
 
             for (int i = 0; i < Constants.MaxColorAttachments; i++)
             {
-                ColorBlendStateUid blendState = Internal.ColorBlendState[i];
-
-                if (blendState.PixelFormat != MTLPixelFormat.Invalid)
+                if (colors[i].PixelFormat != MTLPixelFormat.Invalid)
                 {
-                    MTLRenderPipelineColorAttachmentDescriptor pipelineAttachment = renderPipelineDescriptor.ColorAttachments.Object((ulong)i);
-
-                    BuildColorAttachment(pipelineAttachment, blendState);
-
-                    if (i == snapshotSlot)
-                    {
-                        pipelineAttachment.WriteMask = MTLColorWriteMask.None;
-                    }
-
-                    // An attachment the fragment function does not write gets UNDEFINED
-                    // contents from Metal (the OpenGL backend masks these with the program's
-                    // FragmentOutputMap; MoltenVK disables the write mask for them). Without
-                    // this, a render target the guest left bound - e.g. the scene texture
-                    // during the game's upscaler draw - is overwritten with garbage.
-                    // RYUJINX_METAL_MASK_UNWRITTEN=0 opts out.
-                    if (MaskUnwrittenOutputs && program.FragmentOutputMap != -1)
-                    {
-                        uint bits = ((uint)program.FragmentOutputMap >> (i * 4)) & 0xFu;
-                        MTLColorWriteMask allowed = MTLColorWriteMask.None;
-                        allowed |= (bits & 1u) != 0 ? MTLColorWriteMask.Red : 0;
-                        allowed |= (bits & 2u) != 0 ? MTLColorWriteMask.Green : 0;
-                        allowed |= (bits & 4u) != 0 ? MTLColorWriteMask.Blue : 0;
-                        allowed |= (bits & 8u) != 0 ? MTLColorWriteMask.Alpha : 0;
-                        MTLColorWriteMask before = pipelineAttachment.WriteMask;
-                        MTLColorWriteMask after = before & allowed;
-                        if (after != before)
-                        {
-                            pipelineAttachment.WriteMask = after;
-                            Interlocked.Increment(ref MaskedUnwrittenCount);
-                        }
-                    }
+                    BuildColorAttachment(renderPipelineDescriptor.ColorAttachments.Object((ulong)i), colors[i]);
                 }
             }
 
@@ -547,11 +571,44 @@ namespace Ryujinx.Graphics.Metal
             // queue would only build it twice.
             program.ClaimPrewarm(ref Internal);
 
+            Array8<ColorBlendStateUid> colors = GetColorAttachments(program, SnapshotSlot);
+
+            // Metal 4 (Metal4Pipelines): once the program has the base of this state, the
+            // pipeline is a specialization of a few tens of microseconds, made here instead of
+            // waiting for a build or skipping the draw. Without one the state is built
+            // classically as before, and the base in the background: in a game's first Metal 4
+            // session a base is compiled from scratch (12 ms on average in Breath of the Wild)
+            // while the OS cache still holds the classic pipeline (0.14 ms).
+            if (Metal4Pipelines.CanBuild(program, LogicOpEnable))
+            {
+                long specializeStart = Stopwatch.GetTimestamp();
+
+                if (Metal4Pipelines.TrySpecializeReady(program, ref Internal, colors, out pipelineState))
+                {
+                    long specializeTicks = Stopwatch.GetTimestamp() - specializeStart;
+                    PsoRenderCreated++;
+                    PsoRenderTicks += specializeTicks;
+
+                    if (specializeTicks > PsoRenderMaxTicks)
+                    {
+                        PsoRenderMaxTicks = specializeTicks;
+                    }
+
+                    NoteFirstVertexAttribute();
+                    program.AddGraphicsPipeline(ref Internal, pipelineState);
+                    PipelineStateStore.Record(program, ref Internal);
+
+                    return pipelineState;
+                }
+
+                Metal4Pipelines.QueueBase(program, ref Internal);
+            }
+
             if (AsyncPso)
             {
                 if (!mustHave)
                 {
-                    MTLRenderPipelineDescriptor asyncDescriptor = CreateRenderDescriptor(program);
+                    MTLRenderPipelineDescriptor asyncDescriptor = CreateRenderDescriptor(program, colors, prewarm: false);
                     PipelineUid key = Internal;
 
                     program.BeginGraphicsPipelineBuild(ref key);
@@ -576,7 +633,7 @@ namespace Ryujinx.Graphics.Metal
                 PsoRenderSyncFallbacks++;
             }
 
-            using MTLRenderPipelineDescriptor descriptor = CreateRenderDescriptor(program);
+            using MTLRenderPipelineDescriptor descriptor = CreateRenderDescriptor(program, colors, prewarm: false);
 
             NSError error = new(IntPtr.Zero);
             long psoStart = Stopwatch.GetTimestamp();
@@ -639,6 +696,17 @@ namespace Ryujinx.Graphics.Metal
                 PipelineUid builtKey = key;
                 program.EndGraphicsPipelineBuild(ref builtKey, built);
             }, null);
+        }
+
+        // The draw-time probe BuildVertexDescriptor makes when it builds a classic descriptor for a draw
+        // (UploadCorrelator), which a Metal 4 build skips: its base descriptor is built once, maybe elsewhere.
+        private readonly void NoteFirstVertexAttribute()
+        {
+            if (VertexAttributeDescriptionsCount > 0)
+            {
+                VertexInputAttributeUid uid = Internal.VertexAttributes[0];
+                UploadCorrelator.NoteVertexAttrib((int)uid.Format, (int)uid.Offset, (int)uid.BufferIndex);
+            }
         }
 
         public static MTLComputePipelineDescriptor CreateComputeDescriptor(Program program)

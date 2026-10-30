@@ -110,6 +110,8 @@ namespace Ryujinx.Graphics.Metal
             HelperShader = new HelperShader(_device, this, _pipeline);
             SyncManager = new SyncManager(this);
 
+            Metal4Pipelines.Initialize(_device);
+
             if (PipelinePrewarmer.Enabled || PipelinePrewarmer.DeferCompile)
             {
                 PipelinePrewarmer = new PipelinePrewarmer(_device);
@@ -423,6 +425,7 @@ namespace Ryujinx.Graphics.Metal
             // Stop the pre-warm workers first: a program waits for a build in flight on it.
             PipelinePrewarmer?.Dispose();
             PipelineStateStore.Close();
+            Metal4Pipelines.Close();
 
             foreach (Program program in Programs)
             {

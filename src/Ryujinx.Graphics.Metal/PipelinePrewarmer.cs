@@ -260,9 +260,7 @@ namespace Ryujinx.Graphics.Metal
                 {
                     PipelineState state = new() { Internal = program.PrewarmKey };
 
-                    using MTLRenderPipelineDescriptor descriptor = state.CreatePrewarmDescriptor(program);
-
-                    pipeline = _device.NewRenderPipelineState(descriptor, ref error);
+                    pipeline = state.BuildAheadOfUse(_device, program, ref error);
                 }
                 finally
                 {
@@ -323,9 +321,8 @@ namespace Ryujinx.Graphics.Metal
                 try
                 {
                     PipelineState state = new() { Internal = key };
-                    using MTLRenderPipelineDescriptor descriptor = state.CreatePrewarmDescriptor(program);
 
-                    pipeline = _device.NewRenderPipelineState(descriptor, ref error);
+                    pipeline = state.BuildAheadOfUse(_device, program, ref error);
                 }
                 finally
                 {

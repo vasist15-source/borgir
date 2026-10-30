@@ -115,6 +115,8 @@ RYUJINX_METAL_BARRIER_SCOPE=all ./Ryujinx
 | `RYUJINX_METAL_ASYNC_PSO_BURST` | `64` | 一帧排队构建超过该数后剩余的原地构建（读档爆发）；`0` 关闭 |
 | `RYUJINX_METAL_PREWARM` | 开 | `0`：不在着色器缓存加载后预先构建管线（第二次启动进关卡时又会边画边建） |
 | `RYUJINX_METAL_DEFER_COMPILE` | 开 | `0`：加载着色器缓存时就编译全部 MSL（系统编译缓存冷时启动会慢几秒到几十秒） |
+| `RYUJINX_METAL_MTL4_PIPELINES` | 关 | `1`：试验中的 Metal 4 管线。每个程序按顶点布局只完整编译一个"底座"（颜色附件的格式、混合、写掩码留空，深度格式 Metal 4 本来就不写进管线），其余状态由底座特化，一个约 10–30 微秒；底座存进游戏着色器缓存目录下的 `metal4/` 归档，下次启动直接取用。第一次开启会从头编译全部底座（旷野之息 3,885 个，预热线程后台约 45 秒，期间绘制照旧走经典构建），归档约 128 MB |
+| `RYUJINX_METAL_MTL4_ARCHIVE` | 开 | `0`：Metal 4 底座只留在内存，不读写 `metal4/` 归档 |
 | `RYUJINX_METAL_SKIP_SELF_SPLIT` | 开 | `0`：关闭"自读放行"，更保守但慢很多 |
 | `RYUJINX_METAL_FB_FETCH` | 开 | `0`：关闭 framebuffer fetch（R32F 深度自读改走拆通道） |
 | `RYUJINX_METAL_BUFFER_MIRRORS` | 开 | `0`：关闭缓冲镜像写入 |

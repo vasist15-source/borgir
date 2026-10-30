@@ -53,6 +53,12 @@ namespace Ryujinx.Graphics.Metal
         public MTLFunction ComputeFunction;
         public ComputeSize ComputeLocalSize { get; }
 
+        // The libraries of the stages, which a Metal 4 pipeline names its functions by; set (and held by _libraries)
+        // only when Metal4Pipelines is enabled, and so are the bases of this program's pipelines.
+        public MTLLibrary VertexLibrary;
+        public MTLLibrary FragmentLibrary;
+        public readonly Metal4Pipelines.Bases Metal4Bases = Metal4Pipelines.Enabled ? new() : null;
+
         private HashTableSlim<PipelineUid, MTLRenderPipelineState> _graphicsPipelineCache;
         // Asynchronous pipeline-state builds (PipelineState.CreateRenderPipeline): the keys
         // whose build is in flight are render-thread state; the builds land on worker
@@ -1553,13 +1559,13 @@ namespace Ryujinx.Graphics.Metal
 
             _device = device;
             _deferred = fromCache && PipelinePrewarmer.DeferCompile;
+            _libraries = new MTLLibrary[shaders.Length];
 
             if (_deferred)
             {
                 // Usable as far as the shader cache loader is concerned: the MSL compiled
                 // when it was cached, and it is compiled again off the boot path.
                 _status = ProgramLinkStatus.Success;
-                _libraries = new MTLLibrary[shaders.Length];
                 _compilationEvent.Set();
             }
             else
@@ -1654,9 +1660,11 @@ namespace Ryujinx.Graphics.Metal
                                 break;
                             case ShaderStage.Vertex:
                                 VertexFunction = library.NewFunction(StringHelper.NSString("vertexMain"));
+                                VertexLibrary = Metal4Bases != null ? library : default;
                                 break;
                             case ShaderStage.Fragment:
                                 FragmentFunction = library.NewFunction(StringHelper.NSString("fragmentMain"));
+                                FragmentLibrary = Metal4Bases != null ? library : default;
                                 break;
                             default:
                                 Logger.Warning?.Print(LogClass.Gpu, $"Cannot handle stage {shader.Stage}!");
@@ -1717,6 +1725,22 @@ namespace Ryujinx.Graphics.Metal
                 default:
                     Logger.Warning?.Print(LogClass.Gpu, $"Cannot handle stage {shader.Stage}!");
                     break;
+            }
+
+            // The handler's library is only lent to it; Metal 4 pipelines need it for as long as the program.
+            if (Metal4Bases != null && shader.Stage is ShaderStage.Vertex or ShaderStage.Fragment)
+            {
+                ObjcOwnership.Retain(library.NativePtr);
+                _libraries[index] = library;
+
+                if (shader.Stage == ShaderStage.Vertex)
+                {
+                    VertexLibrary = library;
+                }
+                else
+                {
+                    FragmentLibrary = library;
+                }
             }
 
             if (Interlocked.Increment(ref _successCount) >= _handles.Length && _status != ProgramLinkStatus.Failure)
@@ -1895,6 +1919,29 @@ namespace Ryujinx.Graphics.Metal
 
         /// <summary>The states this program was drawn with in earlier sessions, or null.</summary>
         public PipelineUid[] SavedPipelineKeys => _savedKeys;
+
+        /// <summary>
+        /// A Metal 4 base built in the background for a draw (Metal4Pipelines.QueueBase), unless the program is being
+        /// disposed. Counted as an in-flight build before the check, so Dispose waits for it.
+        /// </summary>
+        public bool TryBeginBackgroundBuild()
+        {
+            Interlocked.Increment(ref _inFlightGraphicsPipelineBuilds);
+
+            if (Volatile.Read(ref _disposing) != 0)
+            {
+                Interlocked.Decrement(ref _inFlightGraphicsPipelineBuilds);
+
+                return false;
+            }
+
+            return true;
+        }
+
+        public void EndBackgroundBuild()
+        {
+            Interlocked.Decrement(ref _inFlightGraphicsPipelineBuilds);
+        }
 
         /// <summary>
         /// Prewarm worker: starts building one of the saved states, unless the program is being disposed. Counted as
@@ -2461,6 +2508,7 @@ namespace Ryujinx.Graphics.Metal
                 CrashRing.ProgramDispose(DebugLabel, firstPso, psoCount);
             }
 
+            Metal4Bases?.Dispose();
             _computePipelineCache?.Dispose();
 
             IntPtr prewarmedCompute = Interlocked.Exchange(ref _prewarmedCompute, IntPtr.Zero);

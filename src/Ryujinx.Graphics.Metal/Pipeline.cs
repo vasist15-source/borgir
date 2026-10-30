@@ -1607,6 +1607,7 @@ namespace Ryujinx.Graphics.Metal
 
             StallLedger.NotePresent(_presentCount);
             PipelineStateStore.NotePresent();
+            Metal4Pipelines.NotePresent();
 
             if (_frameLine)
             {
@@ -1771,7 +1772,8 @@ namespace Ryujinx.Graphics.Metal
                         $"async {(PipelineState.AsyncPso ? "on" : "off")}: {psoRenderQueued} queued, {psoWaited} waited ({psoWaitTicks * tickMs:F1}ms), {psoPendingSkips} draws skipped pending, {psoSyncFallbacks} built in place (fullscreen/burst); " +
                         $"{psoFramesWithCreation} of {SyncStatsLogFrameInterval} frames compiled, " +
                         $"worst frame {psoWorstFrameCount} in {psoWorstFrameTicks * tickMs:F1}ms." +
-                        (PipelinePrewarmer.Enabled || PipelinePrewarmer.DeferCompile ? PipelinePrewarmer.FormatStats() : string.Empty) + CounterManager.TakeStats() +
+                        (PipelinePrewarmer.Enabled || PipelinePrewarmer.DeferCompile ? PipelinePrewarmer.FormatStats() : string.Empty) +
+                        Metal4Pipelines.FormatStats() + CounterManager.TakeStats() +
                         (Ryujinx.Common.SyncMemDiag.SnapshotAndResetExtraSync() is long extraSyncs && extraSyncs != 0 ? $" extra syncs: {extraSyncs}." : string.Empty);
 
                     Logger.Info?.PrintMsg(
